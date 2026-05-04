@@ -1,0 +1,211 @@
+
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="theme-color" content="#0061a4" />
+    <meta name="description" content="Gestão de Produção Home Pots" />
+    
+    <!-- iOS Support -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Home Pots" />
+    <link rel="apple-touch-icon" href="https://cdn-icons-png.flaticon.com/512/7656/7656424.png" />
+
+    <!-- PWA Manifest -->
+    <link rel="manifest" href="/manifest.json" />
+
+    <title>Home Pots Manager</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            colors: {
+              primary: 'rgb(var(--color-primary) / <alpha-value>)',
+              'on-primary': 'rgb(var(--color-on-primary) / <alpha-value>)',
+              'primary-container': 'rgb(var(--color-primary-container) / <alpha-value>)',
+              'on-primary-container': 'rgb(var(--color-on-primary-container) / <alpha-value>)',
+              
+              secondary: 'rgb(var(--color-secondary) / <alpha-value>)',
+              'on-secondary': 'rgb(var(--color-on-secondary) / <alpha-value>)',
+              'secondary-container': 'rgb(var(--color-secondary-container) / <alpha-value>)',
+              'on-secondary-container': 'rgb(var(--color-on-secondary-container) / <alpha-value>)',
+              
+              tertiary: 'rgb(var(--color-tertiary) / <alpha-value>)',
+              'on-tertiary': 'rgb(var(--color-on-tertiary) / <alpha-value>)',
+              'tertiary-container': 'rgb(var(--color-tertiary-container) / <alpha-value>)',
+              'on-tertiary-container': 'rgb(var(--color-on-tertiary-container) / <alpha-value>)',
+
+              background: 'rgb(var(--color-background) / <alpha-value>)',
+              'on-background': 'rgb(var(--color-on-background) / <alpha-value>)',
+              
+              surface: 'rgb(var(--color-surface) / <alpha-value>)',
+              'on-surface': 'rgb(var(--color-on-surface) / <alpha-value>)',
+              
+              'surface-variant': 'rgb(var(--color-surface-variant) / <alpha-value>)',
+              'on-surface-variant': 'rgb(var(--color-on-surface-variant) / <alpha-value>)',
+              
+              outline: 'rgb(var(--color-outline) / <alpha-value>)',
+              'outline-variant': 'rgb(var(--color-outline-variant) / <alpha-value>)',
+
+              error: 'rgb(var(--color-error) / <alpha-value>)',
+              'on-error': 'rgb(var(--color-on-error) / <alpha-value>)',
+              'error-container': 'rgb(var(--color-error-container) / <alpha-value>)',
+              'on-error-container': 'rgb(var(--color-on-error-container) / <alpha-value>)',
+
+              success: 'rgb(var(--color-success) / <alpha-value>)',
+              'on-success': 'rgb(var(--color-on-success) / <alpha-value>)',
+              'success-container': 'rgb(var(--color-success-container) / <alpha-value>)',
+              'on-success-container': 'rgb(var(--color-on-success-container) / <alpha-value>)',
+            }
+          }
+        }
+      }
+    </script>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <style>
+      :root {
+        /* MD3 Light Scheme */
+        --color-primary: 0 97 164; /* #0061a4 */
+        --color-on-primary: 255 255 255;
+        --color-primary-container: 209 228 255; /* #d1e4ff */
+        --color-on-primary-container: 0 29 54; /* #001d36 */
+        
+        --color-secondary: 83 95 112;
+        --color-on-secondary: 255 255 255;
+        --color-secondary-container: 215 227 248;
+        --color-on-secondary-container: 16 28 43;
+        
+        /* Tertiary (Red/Pinkish for Paint) */
+        --color-tertiary: 154 64 88;
+        --color-on-tertiary: 255 255 255;
+        --color-tertiary-container: 255 217 221;
+        --color-on-tertiary-container: 64 0 18;
+
+        --color-background: 253 252 255;
+        --color-on-background: 26 28 30;
+        
+        --color-surface: 253 252 255;
+        --color-on-surface: 26 28 30;
+        
+        --color-surface-variant: 224 226 236; /* #e0e2ec */
+        --color-on-surface-variant: 68 71 79; /* #44474f */
+        
+        --color-outline: 116 119 127;
+        --color-outline-variant: 196 198 208;
+
+        --color-error: 186 26 26;
+        --color-on-error: 255 255 255;
+        --color-error-container: 255 218 214;
+        --color-on-error-container: 65 0 2;
+
+        --color-success: 76 175 80;
+        --color-on-success: 255 255 255;
+        --color-success-container: 185 246 202;
+        --color-on-success-container: 0 33 14;
+      }
+
+      .dark {
+        /* MD3 Dark Scheme */
+        --color-primary: 158 202 255; /* #9ecaff */
+        --color-on-primary: 0 50 88; /* #003258 */
+        --color-primary-container: 0 73 125; /* #00497d */
+        --color-on-primary-container: 209 228 255; /* #d1e4ff */
+        
+        --color-secondary: 187 199 219;
+        --color-on-secondary: 37 49 64;
+        --color-secondary-container: 62 74 90;
+        --color-on-secondary-container: 215 227 248;
+
+        /* Tertiary Dark */
+        --color-tertiary: 255 178 190;
+        --color-on-tertiary: 93 17 34;
+        --color-tertiary-container: 123 41 60;
+        --color-on-tertiary-container: 255 217 221;
+
+        --color-background: 26 28 30;
+        --color-on-background: 226 226 230;
+        
+        --color-surface: 26 28 30;
+        --color-on-surface: 226 226 230;
+        
+        --color-surface-variant: 68 71 79;
+        --color-on-surface-variant: 196 198 208;
+        
+        --color-outline: 142 144 153;
+        --color-outline-variant: 68 71 79;
+
+        --color-error: 255 180 171;
+        --color-on-error: 105 0 5;
+        --color-error-container: 147 0 10;
+        --color-on-error-container: 255 218 214;
+
+        --color-success: 102 187 106;
+        --color-on-success: 0 56 28;
+        --color-success-container: 0 83 45;
+        --color-on-success-container: 185 246 202;
+      }
+
+      body {
+        font-family: 'Roboto', sans-serif;
+        -webkit-tap-highlight-color: transparent;
+      }
+      /* Custom Scrollbar for better touch experience */
+      ::-webkit-scrollbar {
+        width: 8px;
+      }
+      ::-webkit-scrollbar-track {
+        background: transparent;
+      }
+      ::-webkit-scrollbar-thumb {
+        background: rgba(116, 119, 127, 0.3);
+        border-radius: 4px;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: rgba(116, 119, 127, 0.5);
+      }
+    </style>
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          // Use absolute path /service-worker.js to ensure scope is root and works on nested routes
+          navigator.serviceWorker.register('/service-worker.js')
+            .then(registration => {
+              console.log('ServiceWorker registration successful with scope: ', registration.scope);
+            })
+            .catch(err => {
+              console.warn('ServiceWorker registration failed: ', err);
+            });
+        });
+      }
+    </script>
+  <script type="importmap">
+{
+  "imports": {
+    "uuid": "https://esm.sh/uuid@^10.0.0",
+    "clsx": "https://esm.sh/clsx@^2.1.1",
+    "react/": "https://esm.sh/react@^19.2.4/",
+    "react": "https://esm.sh/react@^19.2.4",
+    "lucide-react": "https://esm.sh/lucide-react@^0.563.0",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.4/",
+    "@google/genai": "https://esm.sh/@google/genai@^1.39.0",
+    "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@2.39.3",
+    "recharts": "https://esm.sh/recharts@^2.15.0",
+    "zustand/": "https://esm.sh/zustand@^5.0.11/",
+    "zustand": "https://esm.sh/zustand@^5.0.11",
+    "tailwind-merge": "https://esm.sh/tailwind-merge@^3.4.0",
+    "jspdf": "https://esm.sh/jspdf@2.5.1",
+    "jspdf-autotable": "https://esm.sh/jspdf-autotable@3.8.2"
+  }
+}
+</script>
+<link rel="stylesheet" href="/index.css">
+</head>
+  <body class="bg-background text-on-background transition-colors duration-200">
+    <div id="root"></div>
+  <script type="module" src="/index.tsx"></script>
+</body>
+</html>
