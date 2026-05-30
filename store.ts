@@ -6,11 +6,17 @@ import { INITIAL_EMPLOYEES, INITIAL_VASES, DEFAULT_SUPERVISOR_PASS } from './con
 import { v4 as uuidv4 } from 'uuid';
 import { calculatePaintingCommission, generateCIP, getYearDigit, getDayOfYear } from './utils/calculations';
 
-// Initial Version Seed - Updated to 1.21.0
-const INITIAL_VERSION = '1.21.0';
+// Initial Version Seed - Updated to 1.22.0
+const INITIAL_VERSION = '1.22.0';
 
 // Pre-populated history for fresh installs - FULL HISTORY KEPT
 const INITIAL_CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '1.22.0',
+    date: Date.now(),
+    type: 'FEATURE',
+    description: 'Implementação da estrutura do Capacitor para empacotamento em app Android.'
+  },
   {
     version: '1.21.0',
     date: Date.now(),

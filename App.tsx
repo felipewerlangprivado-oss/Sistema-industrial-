@@ -89,6 +89,10 @@ const App: React.FC = () => {
     if (systemVersion === '1.20.0') {
       registerSystemUpdate('FIX', 'Ajuste definitivo da configuração das variáveis do Supabase (URL e Chave) para conectar corretamente com o projeto.');
     }
+
+    if (systemVersion === '1.21.0') {
+      registerSystemUpdate('FEATURE', 'Implementação da estrutura do Capacitor para empacotamento em app Android.');
+    }
   }, [systemVersion, registerSystemUpdate]);
 
   // Routing Logic based on State (Auth Guard)
