@@ -165,7 +165,7 @@ export async function syncData(): Promise<boolean> {
     const mergedVaseModels = mergeListById(localVaseModels, remoteVaseModels);
     const mergedProductionItems = mergeProductionItems(localProductionItems, remoteProductionItems);
     const mergedPayments = mergeListById(localPayments, remotePayments);
-    const mergedDrafts = mergeListById(localDrafts, remoteDrafts);
+    const mergedDrafts = localDrafts; // Keep drafts local-only
     const mergedSystemLogs = mergeListById(localSystemLogs, remoteSystemLogs);
     const mergedGoals = mergeListById(localGoals, remoteGoals);
 

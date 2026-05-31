@@ -480,7 +480,7 @@ export const useStore = create<AppState>()(
           
           const usedSequences = state.productionItems
             .filter(item => item.cip && item.cip.startsWith(cipPrefix))
-            .map(item => parseInt(item.cip!.slice(5), 10))
+            .map(item => parseInt(item.cip!.slice(cipPrefix.length), 10))
             .filter(n => !isNaN(n));
 
           let nextSequence = usedSequences.length > 0 ? Math.max(...usedSequences) + 1 : 0;
