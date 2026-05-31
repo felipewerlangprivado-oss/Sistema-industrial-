@@ -7,10 +7,20 @@ import ProductionScreen from './screens/ProductionScreen';
 import ProcessingScreen from './screens/ProcessingScreen';
 import SupervisorDashboard from './screens/SupervisorDashboard';
 import InstallPWA from './components/InstallPWA';
+import { startAutoSync, stopAutoSync, setupStoreListener } from './services/syncService';
 
 const App: React.FC = () => {
   const { isDarkMode, currentUser, currentSector, registerSystemUpdate, systemVersion } = useStore();
   const initRef = useRef(false);
+
+  // Initialize Supabase Sync on App Load
+  useEffect(() => {
+    setupStoreListener();
+    startAutoSync(15000); // 15 seconds loop
+    return () => {
+      stopAutoSync();
+    };
+  }, []);
 
   useEffect(() => {
     if (isDarkMode) {
@@ -92,6 +102,10 @@ const App: React.FC = () => {
 
     if (systemVersion === '1.21.0') {
       registerSystemUpdate('FEATURE', 'Implementação da estrutura do Capacitor para empacotamento em app Android.');
+    }
+
+    if (systemVersion === '1.22.0') {
+      registerSystemUpdate('FEATURE', 'Sincronização em tempo real (WebSockets) implementada. Atualize o banco de dados rodando o novo Script SQL gerado.');
     }
   }, [systemVersion, registerSystemUpdate]);
 

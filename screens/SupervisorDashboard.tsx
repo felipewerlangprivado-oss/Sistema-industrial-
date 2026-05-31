@@ -1,7 +1,8 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useStore } from '../store';
 import { Button, Card, Modal, cn, Badge } from '../components/UI';
+import { subscribeToSyncStatus, syncData, SyncStatus } from '../services/syncService';
 import { 
   Box, Users, Settings, 
   Moon, LogOut, Trash, Plus, Pencil, 
@@ -1279,6 +1280,21 @@ const ConfigTab = () => {
   } = useStore();
   
   const [confirmClosePeriod, setConfirmClosePeriod] = useState(false);
+  const [syncState, setSyncState] = useState<SyncStatus>({
+     status: 'IDLE',
+     lastSynced: null
+  });
+
+  useEffect(() => {
+     const unsubscribe = subscribeToSyncStatus((status) => {
+        setSyncState(status);
+     });
+     return () => unsubscribe();
+  }, []);
+
+  const handleManualSync = async () => {
+     await syncData();
+  };
   const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
   const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0]);
   const [filterEmployeeId, setFilterEmployeeId] = useState<string>('');
@@ -1674,6 +1690,66 @@ const ConfigTab = () => {
                 {diagStatus === 'CHECKING' ? 'Executando...' : 'Executar Diagnóstico'}
              </Button>
           </div>
+      </Card>
+
+      {/* Cloud Sync Status */}
+      <Card className="p-5 border border-outline-variant bg-surface">
+          <div className="flex items-center gap-3 mb-4 text-primary">
+             <div className="bg-primary-container p-2 rounded-full"><RefreshCcw className="w-5 h-5 text-on-primary-container" /></div>
+             <h3 className="font-bold text-on-surface">Sincronização de Aparelhos (Nuvem)</h3>
+          </div>
+          <p className="text-xs text-on-surface-variant mb-4">
+             O sistema sincroniza automaticamente dados de produção, históricos e logs entre vários aparelhos celulares em tempo real.
+          </p>
+
+          <div className="space-y-3 mb-4">
+             <div className={`p-4 rounded-xl border flex flex-col gap-2 ${
+                syncState.status === 'SUCCESS' ? 'bg-success-container/10 border-success text-on-surface' :
+                syncState.status === 'SYNCING' ? 'bg-secondary-container/10 border-secondary text-on-surface' :
+                syncState.status === 'TABLE_MISSING' ? 'bg-error-container/10 border-error text-on-surface' :
+                syncState.status === 'ERROR' ? 'bg-error-container/10 border-error text-on-surface' :
+                'bg-surface-variant border-outline-variant text-on-surface'
+             }`}>
+                <div className="flex items-center gap-3 font-bold text-sm">
+                   <div className={`w-3 h-3 rounded-full animate-pulse shrink-0 ${
+                      syncState.status === 'SUCCESS' ? 'bg-success' :
+                      syncState.status === 'SYNCING' ? 'bg-warning' :
+                      'bg-error'
+                   }`} />
+                   <span>
+                      {syncState.status === 'IDLE' && 'Aguardando Sincronização'}
+                      {syncState.status === 'SYNCING' && 'Sincronizando com a Nuvem...'}
+                      {syncState.status === 'SUCCESS' && 'Sincronizado e Protegido'}
+                      {syncState.status === 'ERROR' && 'Erro de Sincronização'}
+                      {syncState.status === 'TABLE_MISSING' && 'Configuração de Tabelas Pendente'}
+                   </span>
+                </div>
+                
+                <div className="text-xs opacity-90 space-y-1 pl-6">
+                   {syncState.lastSynced && (
+                      <p><strong>Última Sincronização:</strong> {syncState.lastSynced.toLocaleTimeString()} em {syncState.lastSynced.toLocaleDateString()}</p>
+                   )}
+                   {syncState.errorMessage && (
+                      <p className="text-error font-medium">{syncState.errorMessage}</p>
+                   )}
+                   {syncState.status === 'TABLE_MISSING' && (
+                      <p className="text-error font-semibold mt-1">
+                         Aviso: Por favor, clique em "Gerar Script de Migração" logo acima, copie o script gerado, acesse o painel de administração do seu Supabase, clique em "SQL Editor", cole o script e clique em "Run" para habilitar a sincronização automática.
+                      </p>
+                   )}
+                </div>
+             </div>
+          </div>
+
+          <Button 
+             onClick={handleManualSync} 
+             variant="outline" 
+             className="w-full h-11 flex items-center justify-center gap-2 border-primary text-primary hover:bg-primary-container"
+             disabled={syncState.status === 'SYNCING'}
+          >
+             <RefreshCcw className={`w-4 h-4 ${syncState.status === 'SYNCING' ? 'animate-spin' : ''}`} />
+             {syncState.status === 'SYNCING' ? 'Sincronizando...' : 'Sincronizar Agora'}
+          </Button>
       </Card>
 
       {/* Material & Commission Settings ... (Same as before) */}

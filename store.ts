@@ -6,11 +6,17 @@ import { INITIAL_EMPLOYEES, INITIAL_VASES, DEFAULT_SUPERVISOR_PASS } from './con
 import { v4 as uuidv4 } from 'uuid';
 import { calculatePaintingCommission, generateCIP, getYearDigit, getDayOfYear } from './utils/calculations';
 
-// Initial Version Seed - Updated to 1.22.0
-const INITIAL_VERSION = '1.22.0';
+// Initial Version Seed - Updated to 1.23.0
+const INITIAL_VERSION = '1.23.0';
 
 // Pre-populated history for fresh installs - FULL HISTORY KEPT
 const INITIAL_CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '1.23.0',
+    date: Date.now(),
+    type: 'FEATURE',
+    description: 'Sincronização em tempo real (WebSockets) implementada. Necessário rodar o script SQL de migração atualizado no Supabase.'
+  },
   {
     version: '1.22.0',
     date: Date.now(),
