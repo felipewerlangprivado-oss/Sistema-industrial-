@@ -96,7 +96,6 @@ export async function syncData(): Promise<boolean> {
   updateSyncStatus('SYNCING');
 
   try {
-    const store = useStore.getState();
     const envUrl = import.meta.env.VITE_SUPABASE_URL || '';
     const envKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 
@@ -130,21 +129,24 @@ export async function syncData(): Promise<boolean> {
       remoteData.set(row.key, row.value);
     });
 
+    // Capture latest store state AFTER network request to avoid overwriting recent local changes
+    const latestStore = useStore.getState();
+
     // 2. Extract local Zustand state
-    const localPeriods = store.periods || [];
-    const localEmployees = store.employees || [];
-    const localVaseModels = store.vaseModels || [];
-    const localProductionItems = store.productionItems || [];
-    const localPayments = store.payments || [];
-    const localDrafts = store.drafts || [];
-    const localSystemLogs = store.systemLogs || [];
-    const localGoals = store.goals || [];
-    const localUserPreferences = store.userPreferences || {};
+    const localPeriods = latestStore.periods || [];
+    const localEmployees = latestStore.employees || [];
+    const localVaseModels = latestStore.vaseModels || [];
+    const localProductionItems = latestStore.productionItems || [];
+    const localPayments = latestStore.payments || [];
+    const localDrafts = latestStore.drafts || [];
+    const localSystemLogs = latestStore.systemLogs || [];
+    const localGoals = latestStore.goals || [];
+    const localUserPreferences = latestStore.userPreferences || {};
     
     const localConfigs = {
-      rawMaterialCostPerKg: store.rawMaterialCostPerKg,
-      paintingCommissionPercentage: store.paintingCommissionPercentage,
-      supervisorPassword: store.supervisorPassword,
+      rawMaterialCostPerKg: latestStore.rawMaterialCostPerKg,
+      paintingCommissionPercentage: latestStore.paintingCommissionPercentage,
+      supervisorPassword: latestStore.supervisorPassword,
     };
 
     // 3. Extract remote state
@@ -189,7 +191,7 @@ export async function syncData(): Promise<boolean> {
       rawMaterialCostPerKg: mergedConfigs.rawMaterialCostPerKg,
       paintingCommissionPercentage: mergedConfigs.paintingCommissionPercentage,
       supervisorPassword: mergedConfigs.supervisorPassword,
-      activePeriodId: store.activePeriodId || (mergedPeriods.find(p => p.status === 'ACTIVE')?.id || null)
+      activePeriodId: latestStore.activePeriodId || (mergedPeriods.find(p => p.status === 'ACTIVE')?.id || null)
     });
 
     // 6. Push merged state back to Supabase to keep remote 100% updated
