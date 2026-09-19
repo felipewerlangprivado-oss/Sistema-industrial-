@@ -105,7 +105,11 @@ const App: React.FC = () => {
     }
 
     if (systemVersion === '1.22.0') {
-      registerSystemUpdate('FEATURE', 'Sincronização em tempo real (WebSockets) implementada. Atualize o banco de dados rodando o novo Script SQL gerado.');
+      registerSystemUpdate('FEATURE', 'Sincronização em tempo real (WebSockets) implementada.');
+    }
+
+    if (systemVersion === '1.23.0') {
+      registerSystemUpdate('FEATURE', 'Migração completa para o banco de dados nativo do Google (Firebase Firestore) com sincronização em tempo real, suporte a cache offline industrial e camada de criptografia AES-256-GCM para dados sensíveis e financeiros.');
     }
   }, [systemVersion, registerSystemUpdate]);
 

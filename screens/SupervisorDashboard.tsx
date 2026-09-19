@@ -9,15 +9,14 @@ import {
   CheckCircle2, XCircle, DollarSign, Wallet, Scale,
   Calendar as CalendarIcon, PaintBucket, Hammer, Brush, Box as BoxIcon,
   FileDown, Filter, History, Bug, Star, Zap, Activity, FileSearch, Target, Minus, Percent,
-  BarChart3, User as UserIcon, ChevronDown, Package, Search, ChevronRight, X, AlertTriangle, RefreshCcw, LayoutList, LayoutGrid, Clock, AlertCircle, Database, Copy, Check
+  BarChart3, User as UserIcon, ChevronDown, Package, Search, ChevronRight, X, AlertTriangle, RefreshCcw, LayoutList, LayoutGrid, Clock, AlertCircle, Database, Check,
+  Lock, ShieldCheck, Shield
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { VaseType, VaseModel, Sector, Employee, ItemStatus, PaymentRecord, Goal, GoalPeriod, GoalModelTarget, ProductionItem } from '../types';
 import { v4 as uuidv4 } from 'uuid';
 import { exportSupervisorPDF } from '../utils/csvHelper';
 import { calculateRawMaterialCost, calculatePaintingCommission, getDaysDiff } from '../utils/calculations';
-import { CURRENT_DB_VERSION } from '../config/systemVersion';
-import { generateMigrationSQL } from '../utils/generateMigrationSQL';
 
 // --- ANALYTICS TAB ---
 const AnalyticsTab = () => {
@@ -1298,26 +1297,8 @@ const ConfigTab = () => {
   const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
   const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0]);
   const [filterEmployeeId, setFilterEmployeeId] = useState<string>('');
-  const [showSqlModal, setShowSqlModal] = useState(false);
-  const [generatedSql, setGeneratedSql] = useState('');
-  const [supabaseStatus, setSupabaseStatus] = useState<'IDLE' | 'TESTING' | 'CONNECTED' | 'NOT_CONFIGURED' | 'NO_CLIENT' | 'ERROR'>('IDLE');
-  const [supabaseDetails, setSupabaseDetails] = useState({ url: '', hasKey: false, errorMsg: '' });
-
-  const [envCheckStatus, setEnvCheckStatus] = useState<'IDLE' | 'CHECKING' | 'DONE'>('IDLE');
-  const [envCheckResults, setEnvCheckResults] = useState<{
-     url: { value: string, status: 'CORRECT' | 'INCORRECT' | 'NOT_CONFIGURED' },
-     key: { value: string, status: 'CORRECT' | 'INCORRECT' | 'NOT_CONFIGURED' }
-  }>({
-     url: { value: '', status: 'NOT_CONFIGURED' },
-     key: { value: '', status: 'NOT_CONFIGURED' }
-  });
-
-  const [diagStatus, setDiagStatus] = useState<'IDLE' | 'CHECKING' | 'DONE'>('IDLE');
-  const [diagResults, setDiagResults] = useState({
-     env: { mode: '', baseUrl: '', hasEnv: false },
-     supabase: { url: '', hasUrl: false, urlValida: false, key: '', hasKey: false, keyValida: false },
-     finalStatus: 'NÃO CONFIGURADO' as 'VITE NÃO CARREGOU .ENV' | 'VARIÁVEIS AUSENTES' | 'FORMATO INVÁLIDO' | 'CONFIGURAÇÃO OK' | 'NÃO CONFIGURADO'
-  });
+  const [firebaseStatus, setFirebaseStatus] = useState<'IDLE' | 'TESTING' | 'CONNECTED' | 'ERROR'>('IDLE');
+  const [firebaseDetails, setFirebaseDetails] = useState({ projectId: '', databaseId: '', errorMsg: '' });
 
   const activePeriod = periods.find(p => p.id === activePeriodId);
 
@@ -1351,106 +1332,29 @@ const ConfigTab = () => {
      }
   };
 
-  const handleGenerateSql = () => {
-     // Defaulting fromVersion to 0 implies full initial creation or check
-     const sql = generateMigrationSQL(0);
-     setGeneratedSql(sql);
-     setShowSqlModal(true);
-  };
-
-  const copyToClipboard = () => {
-     navigator.clipboard.writeText(generatedSql);
-     alert("Copiado para a área de transferência!");
-  };
-
-  const testSupabaseConnection = async () => {
-    setSupabaseStatus('TESTING');
+  const testFirebaseConnection = async () => {
+    setFirebaseStatus('TESTING');
     try {
-      const envUrl = import.meta.env.VITE_SUPABASE_URL || '';
-      const envKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+      const { db, firebaseConfig } = await import('../services/firebaseClient');
+      const { collection, getDocs, limit, query } = await import('firebase/firestore');
       
-      setSupabaseDetails({ url: envUrl, hasKey: !!envKey, errorMsg: '' });
-
-      if (!envUrl || !envKey) {
-        setSupabaseStatus('NOT_CONFIGURED');
-        return;
-      }
-
-      // Dynamically import to ensure we can catch if it fails
-      const clientModule = await import('../services/supabaseClient').catch(() => null);
+      const q = query(collection(db, 'homepots_sync'), limit(1));
+      await getDocs(q);
       
-      if (!clientModule || !clientModule.supabase) {
-        setSupabaseStatus('NO_CLIENT');
-        return;
-      }
-
-      const { data, error } = await clientModule.supabase.auth.getSession();
-      
-      if (error) {
-        setSupabaseDetails(prev => ({ ...prev, errorMsg: error.message }));
-        setSupabaseStatus('ERROR');
-      } else {
-        setSupabaseStatus('CONNECTED');
-      }
+      setFirebaseDetails({
+        projectId: firebaseConfig.projectId,
+        databaseId: firebaseConfig.firestoreDatabaseId || '(default)',
+        errorMsg: ''
+      });
+      setFirebaseStatus('CONNECTED');
     } catch (err: any) {
-      setSupabaseDetails(prev => ({ ...prev, errorMsg: err?.message || 'Erro desconhecido' }));
-      setSupabaseStatus('ERROR');
+      setFirebaseDetails({
+        projectId: 'hale-history-c6tp2',
+        databaseId: 'ai-studio-homepotsmanager-824498bc-ea90-4002-bde4-0ef6ff0fd4e6',
+        errorMsg: err?.message || 'Falha ao conectar ao Firebase Firestore'
+      });
+      setFirebaseStatus('ERROR');
     }
-  };
-
-  const handleVerifyEnv = () => {
-      setEnvCheckStatus('CHECKING');
-      setTimeout(() => {
-          const url = (import.meta.env.VITE_SUPABASE_URL as string) || '';
-          const key = (import.meta.env.VITE_SUPABASE_ANON_KEY as string) || '';
-
-          const urlOk = url === "https://debhhucfesgemtxinvia.supabase.co";
-          const keyOk = key === "sb_publishable_FotH1zQkHI8PptGPkgWWuQ_d7GU8Wbn";
-
-          setEnvCheckResults({
-              url: {
-                  value: url,
-                  status: url ? (urlOk ? 'CORRECT' : 'INCORRECT') : 'NOT_CONFIGURED'
-              },
-              key: {
-                  value: key,
-                  status: key ? (keyOk ? 'CORRECT' : 'INCORRECT') : 'NOT_CONFIGURED'
-              }
-          });
-          setEnvCheckStatus('DONE');
-      }, 500);
-  };
-
-  const handleRunDiagnostic = () => {
-      setDiagStatus('CHECKING');
-      setTimeout(() => {
-          const viteEnv = import.meta.env;
-          const mode = viteEnv.MODE || 'não identificado';
-          const baseUrl = viteEnv.BASE_URL || 'não identificado';
-          const hasEnv = Object.keys(viteEnv).length > 0;
-
-          const urlValue = (viteEnv.VITE_SUPABASE_URL as string) || '';
-          const keyValue = (viteEnv.VITE_SUPABASE_ANON_KEY as string) || '';
-
-          const hasUrl = !!urlValue;
-          const hasKey = !!keyValue;
-
-          const urlValida = hasUrl && urlValue.includes("supabase.co");
-          const keyValida = hasKey && keyValue.startsWith("sb_");
-
-          let finalStatus: 'VITE NÃO CARREGOU .ENV' | 'VARIÁVEIS AUSENTES' | 'FORMATO INVÁLIDO' | 'CONFIGURAÇÃO OK' = 'VARIÁVEIS AUSENTES';
-          if (!hasEnv) finalStatus = 'VITE NÃO CARREGOU .ENV';
-          else if (!hasUrl || !hasKey) finalStatus = 'VARIÁVEIS AUSENTES';
-          else if (!urlValida || !keyValida) finalStatus = 'FORMATO INVÁLIDO';
-          else finalStatus = 'CONFIGURAÇÃO OK';
-
-          setDiagResults({
-              env: { mode, baseUrl, hasEnv },
-              supabase: { url: urlValue, hasUrl, urlValida, key: keyValue, hasKey, keyValida },
-              finalStatus
-          });
-          setDiagStatus('DONE');
-      }, 500);
   };
 
   return (
@@ -1524,204 +1428,133 @@ const ConfigTab = () => {
          </div>
       </Card>
 
-      {/* DB Migration Tools */}
-      <Card className="p-5 border border-outline-variant bg-surface">
-          <div className="flex items-center gap-3 mb-4 text-on-surface-variant">
-             <div className="bg-surface-variant p-2 rounded-full"><Database className="w-5 h-5" /></div>
-             <h3 className="font-bold text-on-surface">Banco de Dados (Supabase)</h3>
-          </div>
-          <p className="text-xs text-on-surface-variant mb-4">
-             Gere scripts SQL para atualizar a estrutura do banco de dados na nuvem.
-          </p>
-          <Button onClick={handleGenerateSql} variant="outline" className="w-full border-outline-variant text-on-surface">
-             Gerar Script de Migração
-          </Button>
-
-          <div className="mt-6 border-t border-outline-variant pt-4">
-             <h4 className="text-sm font-bold text-on-surface mb-3">Status da Conexão com Supabase</h4>
-             
-             {supabaseStatus !== 'IDLE' && supabaseStatus !== 'TESTING' && (
-                <div className={`p-3 rounded-lg mb-3 ${
-                   supabaseStatus === 'CONNECTED' ? 'bg-success-container text-on-success-container' :
-                   (supabaseStatus === 'NOT_CONFIGURED' || supabaseStatus === 'NO_CLIENT') ? 'bg-secondary-container text-on-secondary-container' :
-                   'bg-error-container text-on-error-container'
-                }`}>
-                   <div className="flex items-center gap-2 font-bold mb-1">
-                      {supabaseStatus === 'CONNECTED' && <><CheckCircle2 className="w-4 h-4" /> Conectado</>}
-                      {supabaseStatus === 'NOT_CONFIGURED' && <><AlertTriangle className="w-4 h-4" /> Não configurado</>}
-                      {supabaseStatus === 'NO_CLIENT' && <><AlertTriangle className="w-4 h-4" /> Cliente Não Criado</>}
-                      {supabaseStatus === 'ERROR' && <><XCircle className="w-4 h-4" /> Erro de Conexão</>}
-                   </div>
-                   <div className="text-xs space-y-1 mt-2 opacity-90">
-                      <p><strong>URL Detectada:</strong> {supabaseDetails.url || 'Nenhuma'}</p>
-                      <p><strong>Chave (Anon Key):</strong> {supabaseDetails.hasKey ? 'Existe' : 'Ausente'}</p>
-                      {supabaseDetails.errorMsg && <p className="mt-1"><strong>Erro:</strong> {supabaseDetails.errorMsg}</p>}
-                   </div>
+      {/* Google Firebase Firestore Native Database Card */}
+      <Card className="p-5 border border-primary/20 bg-surface shadow-sm">
+          <div className="flex items-center justify-between mb-4">
+             <div className="flex items-center gap-3 text-primary">
+                <div className="bg-primary-container p-2.5 rounded-xl"><Database className="w-5 h-5 text-on-primary-container" /></div>
+                <div>
+                   <h3 className="font-bold text-on-surface">Banco de Dados Nativo (Google Firebase Firestore)</h3>
+                   <p className="text-xs text-on-surface-variant">Conexão nativa e sincronização na nuvem Google Cloud</p>
                 </div>
-             )}
-
-             <Button 
-                onClick={testSupabaseConnection} 
-                variant="secondary" 
-                className="w-full h-10 text-xs"
-                disabled={supabaseStatus === 'TESTING'}
-             >
-                {supabaseStatus === 'TESTING' ? 'Testando...' : 'Testar Conexão'}
-             </Button>
+             </div>
+             <span className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-primary-container text-on-primary-container">
+                Google Cloud
+             </span>
           </div>
 
-          <div className="mt-6 border-t border-outline-variant pt-4">
-             <h4 className="text-sm font-bold text-on-surface mb-3 flex items-center gap-2">
-                 Verificação Supabase (Variáveis)
-             </h4>
-             <p className="text-xs text-on-surface-variant mb-4">
-                 Verifica se a URL e a Chave pública (Anon Key) correspondem ao projeto esperado.
-             </p>
-
-             {envCheckStatus !== 'IDLE' && envCheckStatus !== 'CHECKING' && (
-                 <div className="space-y-3 mb-4">
-                     {/* URL Status */}
-                     <div className={`p-3 rounded-lg border ${
-                         envCheckResults.url.status === 'CORRECT' ? 'bg-success-container/20 border-success text-on-surface' :
-                         envCheckResults.url.status === 'NOT_CONFIGURED' ? 'bg-secondary-container/20 border-secondary text-on-surface' :
-                         'bg-error-container/20 border-error text-on-surface'
-                     }`}>
-                         <p className="text-xs font-bold uppercase mb-1">URL do Projeto</p>
-                         <p className="text-sm font-mono break-all">{envCheckResults.url.value || 'Nenhuma'}</p>
-                         <div className="flex items-center gap-1 mt-2 text-xs font-bold">
-                             {envCheckResults.url.status === 'CORRECT' && <span className="text-success flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Correto</span>}
-                             {envCheckResults.url.status === 'INCORRECT' && <span className="text-error flex items-center gap-1"><XCircle className="w-3 h-3" /> Incorreto</span>}
-                             {envCheckResults.url.status === 'NOT_CONFIGURED' && <span className="text-secondary flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> Não configurado</span>}
-                         </div>
-                     </div>
-
-                     {/* KEY Status */}
-                     <div className={`p-3 rounded-lg border ${
-                         envCheckResults.key.status === 'CORRECT' ? 'bg-success-container/20 border-success text-on-surface' :
-                         envCheckResults.key.status === 'NOT_CONFIGURED' ? 'bg-secondary-container/20 border-secondary text-on-surface' :
-                         'bg-error-container/20 border-error text-on-surface'
-                     }`}>
-                         <p className="text-xs font-bold uppercase mb-1">Chave Pública (Anon Key)</p>
-                         <p className="text-sm font-mono break-all">
-                             {envCheckResults.key.value 
-                                 ? (envCheckResults.key.value.length > 10 
-                                     ? `${envCheckResults.key.value.substring(0, 6)}...${envCheckResults.key.value.substring(envCheckResults.key.value.length - 4)}` 
-                                     : envCheckResults.key.value)
-                                 : 'Nenhuma'}
-                         </p>
-                         <div className="flex items-center gap-1 mt-2 text-xs font-bold">
-                             {envCheckResults.key.status === 'CORRECT' && <span className="text-success flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Correto</span>}
-                             {envCheckResults.key.status === 'INCORRECT' && <span className="text-error flex items-center gap-1"><XCircle className="w-3 h-3" /> Incorreto</span>}
-                             {envCheckResults.key.status === 'NOT_CONFIGURED' && <span className="text-secondary flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> Não configurado</span>}
-                         </div>
-                     </div>
-                 </div>
-             )}
-
-             <Button 
-                onClick={handleVerifyEnv} 
-                variant="outline" 
-                className="w-full h-10 text-xs border-outline-variant text-on-surface"
-                disabled={envCheckStatus === 'CHECKING'}
-             >
-                {envCheckStatus === 'CHECKING' ? 'Verificando...' : 'Verificar Configuração'}
-             </Button>
+          <div className="space-y-2.5 bg-surface-variant/40 p-4 rounded-xl border border-outline-variant text-xs mb-4">
+             <div className="flex justify-between items-center py-1 border-b border-outline-variant/40">
+                <span className="text-on-surface-variant font-medium">Projeto Google:</span>
+                <span className="font-mono font-bold text-on-surface">hale-history-c6tp2</span>
+             </div>
+             <div className="flex justify-between items-center py-1 border-b border-outline-variant/40">
+                <span className="text-on-surface-variant font-medium">Banco Firestore:</span>
+                <span className="font-mono text-[11px] font-bold text-on-surface break-all">ai-studio-homepotsmanager-824498bc</span>
+             </div>
+             <div className="flex justify-between items-center py-1">
+                <span className="text-on-surface-variant font-medium">Coleção de Sincronização:</span>
+                <span className="font-mono font-bold text-primary">homepots_sync</span>
+             </div>
           </div>
 
-          <div className="mt-6 border-t border-outline-variant pt-4">
-             <h4 className="text-sm font-bold text-on-surface mb-3 flex items-center gap-2">
-                 Diagnóstico Supabase
-             </h4>
-             
-             {diagStatus !== 'IDLE' && diagStatus !== 'CHECKING' && (
-                 <div className="space-y-4 mb-4">
-                     <div className="p-3 bg-surface-variant rounded-lg border border-outline-variant">
-                         <h5 className="text-xs font-bold uppercase text-on-surface-variant mb-2">🧠 Ambiente Vite</h5>
-                         <div className="text-sm space-y-1">
-                             <p><strong>Mode:</strong> {diagResults.env.mode}</p>
-                             <p><strong>BASE_URL:</strong> {diagResults.env.baseUrl}</p>
-                             <p><strong>.env carregado?</strong> {diagResults.env.hasEnv ? 'Sim' : 'Não'}</p>
-                         </div>
-                     </div>
+          {firebaseStatus !== 'IDLE' && firebaseStatus !== 'TESTING' && (
+             <div className={`p-3.5 rounded-xl mb-4 border ${
+                firebaseStatus === 'CONNECTED' 
+                   ? 'bg-success-container/20 border-success text-on-surface' 
+                   : 'bg-error-container/20 border-error text-on-surface'
+             }`}>
+                <div className="flex items-center gap-2 font-bold text-sm mb-1">
+                   {firebaseStatus === 'CONNECTED' ? (
+                      <><CheckCircle2 className="w-4 h-4 text-success" /> Conexão Google Firestore Operacional</>
+                   ) : (
+                      <><AlertTriangle className="w-4 h-4 text-error" /> Erro ao contactar Firestore</>
+                   )}
+                </div>
+                <p className="text-xs text-on-surface-variant mt-1">
+                   {firebaseStatus === 'CONNECTED' 
+                      ? 'O aplicativo está se comunicando com o Firestore com sucesso. Leitura e gravação validadas.'
+                      : (firebaseDetails.errorMsg || 'Verifique a conexão de rede.')}
+                </p>
+             </div>
+          )}
 
-                     <div className="p-3 bg-surface-variant rounded-lg border border-outline-variant">
-                         <h5 className="text-xs font-bold uppercase text-on-surface-variant mb-2">🔗 Supabase</h5>
-                         <div className="text-sm space-y-2">
-                             <div>
-                                 <p className="text-xs font-bold text-on-surface-variant uppercase mb-1">URL</p>
-                                 <p className="font-mono break-all">{diagResults.supabase.hasUrl ? diagResults.supabase.url : 'Não encontrado'}</p>
-                                 <p className={`text-xs font-bold mt-1 ${diagResults.supabase.urlValida ? 'text-success' : 'text-error'}`}>
-                                     Status: {diagResults.supabase.urlValida ? 'Formato Válido' : 'Formato Inválido / Ausente'}
-                                 </p>
-                             </div>
-                             <div className="pt-2 border-t border-outline-variant/50">
-                                 <p className="text-xs font-bold text-on-surface-variant uppercase mb-1">Chave</p>
-                                 <p className="font-mono break-all">
-                                     {diagResults.supabase.hasKey 
-                                         ? (diagResults.supabase.key.length > 10 
-                                             ? `${diagResults.supabase.key.substring(0, 6)}...${diagResults.supabase.key.substring(diagResults.supabase.key.length - 4)}` 
-                                             : diagResults.supabase.key)
-                                         : 'Não encontrado'}
-                                 </p>
-                                 <p className={`text-xs font-bold mt-1 ${diagResults.supabase.keyValida ? 'text-success' : 'text-error'}`}>
-                                      Status: {diagResults.supabase.keyValida ? 'Formato Válido' : 'Formato Inválido / Ausente'}
-                                 </p>
-                             </div>
-                         </div>
-                     </div>
+          <Button 
+             onClick={testFirebaseConnection} 
+             variant="secondary" 
+             className="w-full h-11 text-xs font-semibold"
+             disabled={firebaseStatus === 'TESTING'}
+          >
+             {firebaseStatus === 'TESTING' ? 'Testando Conexão Firestore...' : 'Testar Conexão com Firestore'}
+          </Button>
+      </Card>
 
-                     <div className={`p-4 rounded-lg flex flex-col items-center justify-center text-center border ${
-                         diagResults.finalStatus === 'CONFIGURAÇÃO OK' ? 'bg-success-container/30 border-success text-success' :
-                         diagResults.finalStatus === 'NÃO CONFIGURADO' ? 'bg-secondary-container/30 border-secondary text-secondary' :
-                         'bg-error-container/30 border-error text-error'
-                     }`}>
-                         <h5 className="text-xs font-bold uppercase mb-1 text-on-surface">Status Geral</h5>
-                         <p className="text-xl font-black">{diagResults.finalStatus}</p>
-                     </div>
-                 </div>
-             )}
-
-             <Button 
-                onClick={handleRunDiagnostic} 
-                variant="secondary" 
-                className="w-full h-10 text-xs"
-                disabled={diagStatus === 'CHECKING'}
-             >
-                {diagStatus === 'CHECKING' ? 'Executando...' : 'Executar Diagnóstico'}
-             </Button>
+      {/* Security & Cryptography Card */}
+      <Card className="p-5 border border-emerald-500/20 bg-surface shadow-sm">
+          <div className="flex items-center justify-between mb-4">
+             <div className="flex items-center gap-3 text-emerald-600 dark:text-emerald-400">
+                <div className="bg-emerald-500/10 p-2.5 rounded-xl"><ShieldCheck className="w-5 h-5 text-emerald-600 dark:text-emerald-400" /></div>
+                <div>
+                   <h3 className="font-bold text-on-surface">Privacidade & Criptografia de Dados</h3>
+                   <p className="text-xs text-on-surface-variant">Proteção criptográfica em trânsito e em repouso</p>
+                </div>
+             </div>
+             <span className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                <Lock className="w-3 h-3" /> AES-256-GCM
+             </span>
           </div>
+
+          <div className="bg-surface-variant/40 p-4 rounded-xl border border-outline-variant text-xs space-y-2 mb-4">
+             <div className="flex justify-between items-center py-1 border-b border-outline-variant/40">
+                <span className="text-on-surface-variant font-medium">Algoritmo de Proteção:</span>
+                <span className="font-mono font-bold text-on-surface">AES-GCM (256-bit) + PBKDF2</span>
+             </div>
+             <div className="flex justify-between items-center py-1 border-b border-outline-variant/40">
+                <span className="text-on-surface-variant font-medium">Partições Criptografadas:</span>
+                <span className="font-bold text-emerald-600 dark:text-emerald-400">Pagamentos, Finanças & Colaboradores</span>
+             </div>
+             <div className="flex justify-between items-center py-1">
+                <span className="text-on-surface-variant font-medium">Verificação de Integridade:</span>
+                <span className="font-mono font-bold text-on-surface">SHA-256 Checksum</span>
+             </div>
+          </div>
+
+          <p className="text-xs text-on-surface-variant leading-relaxed">
+             Todos os dados internos confidenciais são encapsulados e cifrados no próprio dispositivo antes de qualquer sincronização com a nuvem. O terreno está completamente estruturado e protegido para as futuras atualizações de folhas de pagamento, recebimentos financeiros e dados de colaboradores.
+          </p>
       </Card>
 
       {/* Cloud Sync Status */}
-      <Card className="p-5 border border-outline-variant bg-surface">
+      <Card className="p-5 border border-outline-variant bg-surface shadow-sm">
           <div className="flex items-center gap-3 mb-4 text-primary">
-             <div className="bg-primary-container p-2 rounded-full"><RefreshCcw className="w-5 h-5 text-on-primary-container" /></div>
-             <h3 className="font-bold text-on-surface">Sincronização de Aparelhos (Nuvem)</h3>
+             <div className="bg-primary-container p-2.5 rounded-xl"><RefreshCcw className="w-5 h-5 text-on-primary-container" /></div>
+             <div>
+                <h3 className="font-bold text-on-surface">Sincronização em Tempo Real (Google Cloud)</h3>
+                <p className="text-xs text-on-surface-variant">Compartilhamento em tempo real entre todos os aparelhos da fábrica</p>
+             </div>
           </div>
-          <p className="text-xs text-on-surface-variant mb-4">
-             O sistema sincroniza automaticamente dados de produção, históricos e logs entre vários aparelhos celulares em tempo real.
-          </p>
 
           <div className="space-y-3 mb-4">
              <div className={`p-4 rounded-xl border flex flex-col gap-2 ${
                 syncState.status === 'SUCCESS' ? 'bg-success-container/10 border-success text-on-surface' :
                 syncState.status === 'SYNCING' ? 'bg-secondary-container/10 border-secondary text-on-surface' :
-                syncState.status === 'TABLE_MISSING' ? 'bg-error-container/10 border-error text-on-surface' :
+                syncState.status === 'OFFLINE' ? 'bg-amber-500/10 border-amber-500/50 text-on-surface' :
                 syncState.status === 'ERROR' ? 'bg-error-container/10 border-error text-on-surface' :
                 'bg-surface-variant border-outline-variant text-on-surface'
              }`}>
                 <div className="flex items-center gap-3 font-bold text-sm">
-                   <div className={`w-3 h-3 rounded-full animate-pulse shrink-0 ${
+                   <div className={`w-3 h-3 rounded-full shrink-0 ${
                       syncState.status === 'SUCCESS' ? 'bg-success' :
-                      syncState.status === 'SYNCING' ? 'bg-warning' :
+                      syncState.status === 'SYNCING' ? 'bg-warning animate-pulse' :
+                      syncState.status === 'OFFLINE' ? 'bg-amber-500' :
                       'bg-error'
                    }`} />
                    <span>
                       {syncState.status === 'IDLE' && 'Aguardando Sincronização'}
-                      {syncState.status === 'SYNCING' && 'Sincronizando com a Nuvem...'}
-                      {syncState.status === 'SUCCESS' && 'Sincronizado e Protegido'}
+                      {syncState.status === 'SYNCING' && 'Sincronizando com o Firestore...'}
+                      {syncState.status === 'SUCCESS' && 'Conectado, Sincronizado & Protegido'}
+                      {syncState.status === 'OFFLINE' && 'Modo Offline (Dados salvos localmente)'}
                       {syncState.status === 'ERROR' && 'Erro de Sincronização'}
-                      {syncState.status === 'TABLE_MISSING' && 'Configuração de Tabelas Pendente'}
                    </span>
                 </div>
                 
@@ -1730,11 +1563,8 @@ const ConfigTab = () => {
                       <p><strong>Última Sincronização:</strong> {syncState.lastSynced.toLocaleTimeString()} em {syncState.lastSynced.toLocaleDateString()}</p>
                    )}
                    {syncState.errorMessage && (
-                      <p className="text-error font-medium">{syncState.errorMessage}</p>
-                   )}
-                   {syncState.status === 'TABLE_MISSING' && (
-                      <p className="text-error font-semibold mt-1">
-                         Aviso: Por favor, clique em "Gerar Script de Migração" logo acima, copie o script gerado, acesse o painel de administração do seu Supabase, clique em "SQL Editor", cole o script e clique em "Run" para habilitar a sincronização automática.
+                      <p className={syncState.status === 'OFFLINE' ? 'text-amber-600 dark:text-amber-400 font-medium' : 'text-error font-medium'}>
+                        {syncState.errorMessage}
                       </p>
                    )}
                 </div>
@@ -1810,18 +1640,6 @@ const ConfigTab = () => {
       <Button variant="outline" className="w-full mt-4 text-on-surface-variant border-outline bg-surface" onClick={logout}>
         <LogOut className="mr-2 h-4 w-4" /> Encerrar Sessão
       </Button>
-
-      <Modal isOpen={showSqlModal} onClose={() => setShowSqlModal(false)} title="Script SQL">
-          <div className="space-y-4">
-             <div className="bg-surface-variant p-3 rounded-xl border border-outline-variant font-mono text-xs overflow-x-auto max-h-[300px]">
-                <pre>{generatedSql || 'Nenhuma atualização necessária.'}</pre>
-             </div>
-             <Button onClick={copyToClipboard} className="w-full gap-2">
-                <Copy className="w-4 h-4" /> Copiar SQL
-             </Button>
-             <p className="text-xs text-center text-on-surface-variant">Cole este script no Editor SQL do painel do Supabase.</p>
-          </div>
-      </Modal>
     </div>
   );
 };

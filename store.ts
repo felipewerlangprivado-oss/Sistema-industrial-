@@ -6,14 +6,20 @@ import { INITIAL_EMPLOYEES, INITIAL_VASES, DEFAULT_SUPERVISOR_PASS } from './con
 import { v4 as uuidv4 } from 'uuid';
 import { calculatePaintingCommission, generateCIP, getYearDigit, getDayOfYear } from './utils/calculations';
 
-// Initial Version Seed - Updated to 1.23.0
-const INITIAL_VERSION = '1.23.0';
+// Initial Version Seed - Updated to 1.24.0
+const INITIAL_VERSION = '1.24.0';
 
 // Pre-populated history for fresh installs - FULL HISTORY KEPT
 const INITIAL_CHANGELOG: ChangelogEntry[] = [
   {
-    version: '1.23.0',
+    version: '1.24.0',
     date: Date.now(),
+    type: 'FEATURE',
+    description: 'Migração completa para o banco de dados nativo do Google (Firebase Firestore) com sincronização em tempo real, suporte robusto a cache offline industrial e camada de criptografia AES-256-GCM para dados sensíveis e financeiros.'
+  },
+  {
+    version: '1.23.0',
+    date: Date.now() - 86400000,
     type: 'FEATURE',
     description: 'Sincronização em tempo real (WebSockets) implementada. Necessário rodar o script SQL de migração atualizado no Supabase.'
   },

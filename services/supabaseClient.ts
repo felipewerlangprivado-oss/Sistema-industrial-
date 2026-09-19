@@ -5,7 +5,7 @@ const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 if (!supabaseUrl || !supabaseKey) {
-  console.error('ERRO: VITE_SUPABASE_URL ou VITE_SUPABASE_ANON_KEY não estão definidos.');
+  console.warn('Aviso: VITE_SUPABASE_URL ou VITE_SUPABASE_ANON_KEY não estão definidos. Operando em modo padrão.');
 }
 
 export const supabase = createClient(

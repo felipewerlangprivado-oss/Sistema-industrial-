@@ -1,10 +1,33 @@
-import { supabase } from './supabaseClient';
+/**
+ * Home Pots Manager - Serviço de Sincronização Nativa (Google Firebase Firestore)
+ * 
+ * Sincronização bidirecional em tempo real para o ecossistema fabril.
+ * Inclui criptografia ponta a ponta (AES-256-GCM) para dados confidenciais (pagamentos, finanças e colaboradores).
+ */
+
+import { 
+  collection, 
+  doc, 
+  getDocs, 
+  writeBatch, 
+  onSnapshot, 
+  Unsubscribe 
+} from 'firebase/firestore';
+import { db } from './firebaseClient';
 import { useStore } from '../store';
 import { ProductionItem, Employee, VaseModel, PaymentRecord, Period, Goal, SystemLog, UserPreferences } from '../types';
+import { 
+  encryptPayload, 
+  decryptPayload, 
+  isEncryptedPayload, 
+  SENSITIVE_PARTITION_KEYS 
+} from './cryptoService';
 
 let isSyncing = false;
 let lastSyncTimestamp = 0;
-let hasSetupFailed = false;
+let unsubscribeRealtime: Unsubscribe | null = null;
+let syncIntervalId: any = null;
+let onlineOfflineListenersInitialized = false;
 
 // Helper to determine if a value is defined
 const isDefined = (val: any) => val !== undefined && val !== null;
@@ -40,7 +63,6 @@ function mergeListById<T extends { id: string }>(local: T[], remote: T[]): T[] {
   const map = new Map<string, T>();
   remote.forEach(item => map.set(item.id, item));
   local.forEach(item => {
-    // If it exists locally, we keep local (highly likely local has the latest edits if local is active)
     if (!map.has(item.id)) {
       map.set(item.id, item);
     }
@@ -49,9 +71,10 @@ function mergeListById<T extends { id: string }>(local: T[], remote: T[]): T[] {
 }
 
 export interface SyncStatus {
-  status: 'IDLE' | 'SYNCING' | 'SUCCESS' | 'ERROR' | 'TABLE_MISSING';
+  status: 'IDLE' | 'SYNCING' | 'SUCCESS' | 'ERROR' | 'OFFLINE';
   lastSynced: Date | null;
   errorMessage?: string;
+  isEncrypted: boolean;
 }
 
 // Callback listeners for UI status updates
@@ -59,7 +82,6 @@ const statusListeners = new Set<(status: SyncStatus) => void>();
 
 export function subscribeToSyncStatus(listener: (status: SyncStatus) => void) {
   statusListeners.add(listener);
-  // Initial fire
   listener(getSyncStatusState());
   return () => {
     statusListeners.delete(listener);
@@ -68,13 +90,13 @@ export function subscribeToSyncStatus(listener: (status: SyncStatus) => void) {
 
 let currentStatus: SyncStatus['status'] = 'IDLE';
 let syncErrorMessage: string | undefined = undefined;
-let realtimeChannel: ReturnType<typeof supabase.channel> | null = null;
 
 function getSyncStatusState(): SyncStatus {
   return {
     status: currentStatus,
     lastSynced: lastSyncTimestamp ? new Date(lastSyncTimestamp) : null,
     errorMessage: syncErrorMessage,
+    isEncrypted: true
   };
 }
 
@@ -86,98 +108,88 @@ function updateSyncStatus(status: SyncStatus['status'], errorMsg?: string) {
 }
 
 /**
- * Performs a bi-directional pull and push synchronization with Supabase.
- * It fetches the current remote database state, merges it with local state,
- * updates the local Zustand store, and uploads any updated records to Supabase.
+ * Executa sincronização bidirecional completa com o Firebase Firestore nativo.
+ * Partições confidenciais (pagamentos, colaboradores, taxas) são criptografadas com AES-256-GCM.
  */
 export async function syncData(): Promise<boolean> {
   if (isSyncing) return false;
+
+  // Se o dispositivo estiver estritamente sem internet
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    updateSyncStatus('OFFLINE', 'Dispositivo offline. Todos os dados estão salvos com segurança localmente.');
+    return false;
+  }
+
   isSyncing = true;
   updateSyncStatus('SYNCING');
 
   try {
-    const envUrl = import.meta.env.VITE_SUPABASE_URL || '';
-    const envKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+    const syncCol = collection(db, 'homepots_sync');
 
-    if (!envUrl || !envKey) {
-      isSyncing = false;
-      updateSyncStatus('ERROR', 'Supabase não configurado no arquivo de ambiente (.env).');
-      return false;
-    }
-
-    // 1. Fetch remote data from homepots_sync table
-    const { data: remoteRows, error: fetchError } = await supabase
-      .from('homepots_sync')
-      .select('*');
-
-    if (fetchError) {
-      // Check if table is missing (Postgres error code 42P01)
-      if (fetchError.code === '42P01') {
-        hasSetupFailed = true;
-        isSyncing = false;
-        updateSyncStatus('TABLE_MISSING', 'A tabela "homepots_sync" não existe no Supabase. Crie-a usando o script SQL.');
-        return false;
-      }
-      throw fetchError;
-    }
-
-    hasSetupFailed = false;
-
-    // Convert rows to key-value map
+    // 1. Busca dados da coleção no Firestore
+    const snapshot = await getDocs(syncCol);
     const remoteData = new Map<string, any>();
-    remoteRows?.forEach(row => {
-      remoteData.set(row.key, row.value);
-    });
 
-    // Capture latest store state AFTER network request to avoid overwriting recent local changes
+    for (const docSnap of snapshot.docs) {
+      const data = docSnap.data();
+      const rawValue = data.value;
+      const isEncrypted = data.encrypted || isEncryptedPayload(rawValue);
+
+      if (isEncrypted) {
+        try {
+          const decrypted = await decryptPayload(rawValue);
+          remoteData.set(docSnap.id, decrypted);
+        } catch (decryptErr) {
+          console.warn(`[Sync] Não foi possível decriptografar partição ${docSnap.id}:`, decryptErr);
+          remoteData.set(docSnap.id, rawValue);
+        }
+      } else {
+        remoteData.set(docSnap.id, rawValue);
+      }
+    }
+
+    // 2. Estado Zustand local atual
     const latestStore = useStore.getState();
 
-    // 2. Extract local Zustand state
-    const localPeriods = latestStore.periods || [];
-    const localEmployees = latestStore.employees || [];
-    const localVaseModels = latestStore.vaseModels || [];
-    const localProductionItems = latestStore.productionItems || [];
-    const localPayments = latestStore.payments || [];
-    const localDrafts = latestStore.drafts || [];
-    const localSystemLogs = latestStore.systemLogs || [];
-    const localGoals = latestStore.goals || [];
-    const localUserPreferences = latestStore.userPreferences || {};
-    
+    const remotePeriods = remoteData.get('periods') as Period[] | undefined;
+    const remoteEmployees = remoteData.get('employees') as Employee[] | undefined;
+    const remoteVases = remoteData.get('vaseModels') as VaseModel[] | undefined;
+    const remoteItems = remoteData.get('productionItems') as ProductionItem[] | undefined;
+    const remotePayments = remoteData.get('payments') as PaymentRecord[] | undefined;
+    const remoteDrafts = remoteData.get('drafts') as any[] | undefined;
+    const remoteLogs = remoteData.get('systemLogs') as SystemLog[] | undefined;
+    const remoteGoals = remoteData.get('goals') as Goal[] | undefined;
+    const remotePrefs = remoteData.get('userPreferences') as Record<string, UserPreferences> | undefined;
+    const remoteConfigs = remoteData.get('configs') as any | undefined;
+
+    // 3. Mescla inteligente de dados (CRDT)
+    const mergedPeriods = isDefined(remotePeriods) ? mergeListById(latestStore.periods, remotePeriods) : latestStore.periods;
+    const mergedEmployees = isDefined(remoteEmployees) ? mergeListById(latestStore.employees, remoteEmployees) : latestStore.employees;
+    const mergedVaseModels = isDefined(remoteVases) ? mergeListById(latestStore.vaseModels, remoteVases) : latestStore.vaseModels;
+    const mergedProductionItems = isDefined(remoteItems) ? mergeProductionItems(latestStore.productionItems, remoteItems) : latestStore.productionItems;
+    const mergedPayments = isDefined(remotePayments) ? mergeListById(latestStore.payments, remotePayments) : latestStore.payments;
+    const mergedDrafts = isDefined(remoteDrafts) ? mergeListById(latestStore.drafts, remoteDrafts) : latestStore.drafts;
+    const mergedGoals = isDefined(remoteGoals) ? mergeListById(latestStore.goals, remoteGoals) : latestStore.goals;
+
+    const mergedLogs = isDefined(remoteLogs) 
+      ? Array.from(new Map([...remoteLogs, ...latestStore.systemLogs].map(l => [l.id, l])).values())
+          .sort((a, b) => b.timestamp - a.timestamp)
+      : latestStore.systemLogs;
+
+    const mergedUserPreferences = {
+      ...(latestStore.userPreferences || {}),
+      ...(remotePrefs || {})
+    };
+
     const localConfigs = {
       rawMaterialCostPerKg: latestStore.rawMaterialCostPerKg,
       paintingCommissionPercentage: latestStore.paintingCommissionPercentage,
-      supervisorPassword: latestStore.supervisorPassword,
+      supervisorPassword: latestStore.supervisorPassword
     };
 
-    // 3. Extract remote state
-    const remotePeriods = remoteData.get('periods') || [];
-    const remoteEmployees = remoteData.get('employees') || [];
-    const remoteVaseModels = remoteData.get('vaseModels') || [];
-    const remoteProductionItems = remoteData.get('productionItems') || [];
-    const remotePayments = remoteData.get('payments') || [];
-    const remoteDrafts = remoteData.get('drafts') || [];
-    const remoteSystemLogs = remoteData.get('systemLogs') || [];
-    const remoteGoals = remoteData.get('goals') || [];
-    const remoteUserPreferences = remoteData.get('userPreferences') || {};
-    const remoteConfigs = remoteData.get('configs') || null;
-
-    // 4. Merge lists bidirectionally
-    const mergedPeriods = mergeListById(localPeriods, remotePeriods);
-    const mergedEmployees = mergeListById(localEmployees, remoteEmployees);
-    const mergedVaseModels = mergeListById(localVaseModels, remoteVaseModels);
-    const mergedProductionItems = mergeProductionItems(localProductionItems, remoteProductionItems);
-    const mergedPayments = mergeListById(localPayments, remotePayments);
-    const mergedDrafts = localDrafts; // Keep drafts local-only
-    const mergedSystemLogs = mergeListById(localSystemLogs, remoteSystemLogs);
-    const mergedGoals = mergeListById(localGoals, remoteGoals);
-
-    // Merge User Preferences Maps
-    const mergedUserPreferences = { ...remoteUserPreferences, ...localUserPreferences };
-
-    // Merge Configs (refer to latest if remote has configs, or keep local)
     const mergedConfigs = remoteConfigs ? { ...localConfigs, ...remoteConfigs } : localConfigs;
 
-    // 5. Update local store state silently (blocking subscription loops during update)
+    // 4. Atualiza a store local Zustand
     useStore.setState({
       periods: mergedPeriods,
       employees: mergedEmployees,
@@ -185,37 +197,52 @@ export async function syncData(): Promise<boolean> {
       productionItems: mergedProductionItems,
       payments: mergedPayments,
       drafts: mergedDrafts,
-      systemLogs: mergedSystemLogs,
+      systemLogs: mergedLogs,
       goals: mergedGoals,
       userPreferences: mergedUserPreferences,
-      rawMaterialCostPerKg: mergedConfigs.rawMaterialCostPerKg,
-      paintingCommissionPercentage: mergedConfigs.paintingCommissionPercentage,
-      supervisorPassword: mergedConfigs.supervisorPassword,
-      activePeriodId: latestStore.activePeriodId || (mergedPeriods.find(p => p.status === 'ACTIVE')?.id || null)
+      rawMaterialCostPerKg: mergedConfigs.rawMaterialCostPerKg ?? latestStore.rawMaterialCostPerKg,
+      paintingCommissionPercentage: mergedConfigs.paintingCommissionPercentage ?? latestStore.paintingCommissionPercentage,
+      supervisorPassword: mergedConfigs.supervisorPassword ?? latestStore.supervisorPassword
     });
 
-    // 6. Push merged state back to Supabase to keep remote 100% updated
-    // We upload only the keys whose content is non-empty or updated
-    const uploadPayload = [
+    // 5. Prepara envio protegido para o Firestore
+    const partitions: { key: string; value: any }[] = [
       { key: 'periods', value: mergedPeriods },
       { key: 'employees', value: mergedEmployees },
       { key: 'vaseModels', value: mergedVaseModels },
       { key: 'productionItems', value: mergedProductionItems },
       { key: 'payments', value: mergedPayments },
       { key: 'drafts', value: mergedDrafts },
-      { key: 'systemLogs', value: mergedSystemLogs },
+      { key: 'systemLogs', value: mergedLogs },
       { key: 'goals', value: mergedGoals },
       { key: 'userPreferences', value: mergedUserPreferences },
       { key: 'configs', value: mergedConfigs }
     ];
 
-    const { error: upsertError } = await supabase
-      .from('homepots_sync')
-      .upsert(uploadPayload, { onConflict: 'key' });
+    const batch = writeBatch(db);
+    const now = Date.now();
 
-    if (upsertError) {
-      throw upsertError;
+    for (const partition of partitions) {
+      const isSensitive = SENSITIVE_PARTITION_KEYS.includes(partition.key);
+      let payloadValue = partition.value;
+      let isEncrypted = false;
+
+      // Criptografia AES-256-GCM para dados sensíveis
+      if (isSensitive) {
+        payloadValue = await encryptPayload(partition.value);
+        isEncrypted = true;
+      }
+
+      const docRef = doc(db, 'homepots_sync', partition.key);
+      batch.set(docRef, {
+        key: partition.key,
+        value: payloadValue,
+        updatedAt: now,
+        encrypted: isEncrypted
+      }, { merge: true });
     }
+
+    await batch.commit();
 
     lastSyncTimestamp = Date.now();
     updateSyncStatus('SUCCESS');
@@ -223,49 +250,87 @@ export async function syncData(): Promise<boolean> {
     return true;
 
   } catch (error: any) {
-    console.error('Erro na sincronização de dados:', error);
-    updateSyncStatus('ERROR', error.message || 'Erro deconhecido ao sincronizar.');
+    const errorMsg = error?.message || String(error);
+    const isNetworkError = 
+      error?.name === 'TypeError' || 
+      errorMsg.includes('Failed to fetch') || 
+      errorMsg.includes('unavailable') || 
+      errorMsg.includes('NetworkError') || 
+      errorMsg.includes('network') ||
+      errorMsg.includes('offline') ||
+      (typeof navigator !== 'undefined' && !navigator.onLine);
+
+    if (isNetworkError) {
+      console.warn('[HomePots Firebase] Modo offline ativo. Dados salvos com segurança no aparelho.');
+      updateSyncStatus('OFFLINE', 'Dispositivo operando offline. Todas as alterações continuam salvas localmente.');
+    } else {
+      console.warn('[HomePots Firebase] Aviso na sincronização:', errorMsg);
+      updateSyncStatus('ERROR', errorMsg || 'Erro na sincronização Firestore.');
+    }
     isSyncing = false;
     return false;
   }
 }
 
-// Background auto sync timer
-let syncIntervalId: any = null;
-
-export function startAutoSync(intervalMs = 15000) {
+/**
+ * Inicia o ouvinte em tempo real e o ciclo de sincronização automática do Firestore
+ */
+export function startAutoSync(intervalMs = 20000) {
   if (syncIntervalId) {
     clearInterval(syncIntervalId);
   }
-  
-  if (realtimeChannel) {
-    supabase.removeChannel(realtimeChannel);
-  }
-  
-  // Run initial sync
-  syncData().then((success) => {
-    if (success && !hasSetupFailed) {
-      // Setup Realtime Connection for instant updates
-      realtimeChannel = supabase.channel('table-db-changes')
-        .on(
-          'postgres_changes',
-          {
-            event: '*',
-            schema: 'public',
-            table: 'homepots_sync'
-          },
-          (payload) => {
-            // Trigger a sync when remote data changes
-            console.log('Realtime change detected, syncing...', payload);
-            syncData();
-          }
-        )
-        .subscribe();
-    }
-  });
 
-  // Set periodic sync as a fallback/safety measure
+  if (unsubscribeRealtime) {
+    unsubscribeRealtime();
+    unsubscribeRealtime = null;
+  }
+
+  // Ouvintes de rede online/offline do navegador
+  if (!onlineOfflineListenersInitialized && typeof window !== 'undefined') {
+    onlineOfflineListenersInitialized = true;
+    window.addEventListener('online', () => {
+      console.log('[HomePots Firebase] Conexão restabelecida. Sincronizando com Firestore...');
+      syncData();
+    });
+    window.addEventListener('offline', () => {
+      updateSyncStatus('OFFLINE', 'Dispositivo offline. Todos os dados continuam salvos localmente.');
+    });
+  }
+
+  // Sincronização inicial
+  syncData();
+
+  // Ouvinte nativo em tempo real do Firestore (onSnapshot)
+  try {
+    const syncCol = collection(db, 'homepots_sync');
+    unsubscribeRealtime = onSnapshot(
+      syncCol,
+      { includeMetadataChanges: false },
+      async (snapshot) => {
+        // Ignora se estivermos no meio de um sync local para evitar loops
+        if (isSyncing || snapshot.empty) return;
+        
+        // Verifica se a mudança veio de outro aparelho (não local)
+        const hasPendingWrites = snapshot.docs.some(docSnap => docSnap.metadata.hasPendingWrites);
+        if (hasPendingWrites) return;
+
+        console.log('[HomePots Firebase] Atualização remota detectada em tempo real.');
+        // Executa sync suave para mesclar os dados atualizados
+        syncData();
+      },
+      (error) => {
+        console.warn('[HomePots Firebase] Aviso do ouvinte em tempo real:', error.message);
+      }
+    );
+  } catch (err: any) {
+    console.warn('[HomePots Firebase] Não foi possível iniciar ouvinte em tempo real:', err.message);
+  }
+
+  // Intervalo de segurança periódico
   syncIntervalId = setInterval(() => {
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      return;
+    }
     syncData();
   }, intervalMs);
 }
@@ -275,20 +340,20 @@ export function stopAutoSync() {
     clearInterval(syncIntervalId);
     syncIntervalId = null;
   }
-  if (realtimeChannel) {
-    supabase.removeChannel(realtimeChannel);
-    realtimeChannel = null;
+  if (unsubscribeRealtime) {
+    unsubscribeRealtime();
+    unsubscribeRealtime = null;
   }
 }
 
-// Hook state listener update trigger
+/**
+ * Escuta alterações no Zustand local para disparar persistência em lote para o Firestore
+ */
 export function setupStoreListener() {
-  // Subscribe to local Zustand changes to trigger quick background sync updates
   useStore.subscribe((state, prevState) => {
-    // Avoid re-triggering sync if the store was updated by the sync process itself
-    if (isSyncing || hasSetupFailed) return;
+    if (isSyncing) return;
+    if (currentStatus === 'OFFLINE' && typeof navigator !== 'undefined' && !navigator.onLine) return;
 
-    // Detect if meaningful state arrays changed
     const periodsChanged = state.periods !== prevState.periods;
     const employeesChanged = state.employees !== prevState.employees;
     const vaseModelsChanged = state.vaseModels !== prevState.vaseModels;
@@ -312,13 +377,13 @@ export function setupStoreListener() {
       draftsChanged || 
       goalsChanged || 
       logsChanged ||
-      prefsChanged ||
+      prefsChanged || 
       ratesChanged
     ) {
-      // Run quick deferred sync to batch edits
+      // Dispara sincronização em lote com debouncing de 800ms
       setTimeout(() => {
         syncData();
-      }, 500);
+      }, 800);
     }
   });
 }

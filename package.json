@@ -16,6 +16,7 @@
     "@google/genai": "^1.39.0",
     "@supabase/supabase-js": "2.39.3",
     "clsx": "^2.1.1",
+    "firebase": "^12.19.0",
     "jspdf": "2.5.1",
     "jspdf-autotable": "3.8.2",
     "lucide-react": "^0.563.0",

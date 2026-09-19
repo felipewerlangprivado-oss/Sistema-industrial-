@@ -1,0 +1,35 @@
+{
+  "$schema": "https://raw.githubusercontent.com/firebase/firebase-tools/master/schema/blueprint.json",
+  "collections": [
+    {
+      "name": "homepots_sync",
+      "description": "Dados sincronizados do ecossistema fabril Home Pots (produção, estoque, colaboradores e dados confidenciais criptografados)",
+      "fields": [
+        {
+          "name": "key",
+          "type": "string",
+          "description": "Chave identificadora da coleção de dados (ex: productionItems, payments, employees)",
+          "validation": "request.resource.data.key is string"
+        },
+        {
+          "name": "value",
+          "type": "any",
+          "description": "Conteúdo dos registros ou envelope criptografado",
+          "validation": "request.resource.data.value != null"
+        },
+        {
+          "name": "updatedAt",
+          "type": "number",
+          "description": "Timestamp Unix da última sincronização",
+          "validation": "request.resource.data.updatedAt is number"
+        },
+        {
+          "name": "encrypted",
+          "type": "boolean",
+          "description": "Indica se a partição contém dados confidenciais criptografados via AES-GCM",
+          "validation": "request.resource.data.encrypted is bool"
+        }
+      ]
+    }
+  ]
+}
