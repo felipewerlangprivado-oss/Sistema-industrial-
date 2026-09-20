@@ -109,44 +109,56 @@
       }
 
       .dark {
-        /* MD3 Dark Scheme */
-        --color-primary: 158 202 255; /* #9ecaff */
-        --color-on-primary: 0 50 88; /* #003258 */
-        --color-primary-container: 0 73 125; /* #00497d */
-        --color-on-primary-container: 209 228 255; /* #d1e4ff */
+        /* MD3 Enhanced High-Contrast Dark Scheme */
+        --color-primary: 96 165 250; /* #60a5fa - Luminous sky blue */
+        --color-on-primary: 15 23 42; /* #0f172a */
+        --color-primary-container: 30 58 102; /* #1e3a66 */
+        --color-on-primary-container: 224 238 255; /* #e0eeff */
         
-        --color-secondary: 187 199 219;
-        --color-on-secondary: 37 49 64;
-        --color-secondary-container: 62 74 90;
-        --color-on-secondary-container: 215 227 248;
+        --color-secondary: 203 213 225; /* #cbd5e1 */
+        --color-on-secondary: 15 23 42;
+        --color-secondary-container: 51 65 85;
+        --color-on-secondary-container: 241 245 249;
 
         /* Tertiary Dark */
-        --color-tertiary: 255 178 190;
-        --color-on-tertiary: 93 17 34;
-        --color-tertiary-container: 123 41 60;
-        --color-on-tertiary-container: 255 217 221;
+        --color-tertiary: 251 146 160;
+        --color-on-tertiary: 76 5 25;
+        --color-tertiary-container: 112 26 50;
+        --color-on-tertiary-container: 255 228 232;
 
-        --color-background: 26 28 30;
-        --color-on-background: 226 226 230;
+        /* Distinct Elevation Hierarchy */
+        --color-background: 15 17 21; /* #0f1115 - Deep dark background */
+        --color-on-background: 243 244 246; /* #f3f4f6 - Crisp readable white-gray */
         
-        --color-surface: 26 28 30;
-        --color-on-surface: 226 226 230;
+        --color-surface: 26 29 36; /* #1a1d24 - Elevated surface with distinct contrast */
+        --color-on-surface: 245 246 248; /* #f5f6f8 */
         
-        --color-surface-variant: 68 71 79;
-        --color-on-surface-variant: 196 198 208;
+        --color-surface-variant: 38 43 54; /* #262b36 - Distinct secondary cards and inputs */
+        --color-on-surface-variant: 209 213 219; /* #d1d5db - Highly readable secondary text */
         
-        --color-outline: 142 144 153;
-        --color-outline-variant: 68 71 79;
+        --color-outline: 148 163 184; /* #94a3b8 */
+        --color-outline-variant: 51 58 72; /* #333a48 - Clear card borders */
 
-        --color-error: 255 180 171;
-        --color-on-error: 105 0 5;
-        --color-error-container: 147 0 10;
-        --color-on-error-container: 255 218 214;
+        --color-error: 248 113 113;
+        --color-on-error: 69 10 10;
+        --color-error-container: 127 29 29;
+        --color-on-error-container: 254 226 226;
 
-        --color-success: 102 187 106;
-        --color-on-success: 0 56 28;
-        --color-success-container: 0 83 45;
-        --color-on-success-container: 185 246 202;
+        --color-success: 74 222 128;
+        --color-on-success: 5 46 22;
+        --color-success-container: 20 83 45;
+        --color-on-success-container: 220 252 231;
+      }
+
+      .dark input, 
+      .dark select, 
+      .dark textarea {
+        color-scheme: dark;
+      }
+
+      .dark ::placeholder {
+        color: rgb(156 163 175) !important;
+        opacity: 0.9;
       }
 
       body {

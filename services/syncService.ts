@@ -15,7 +15,8 @@ import {
 } from 'firebase/firestore';
 import { db } from './firebaseClient';
 import { useStore } from '../store';
-import { ProductionItem, Employee, VaseModel, PaymentRecord, Period, Goal, SystemLog, UserPreferences } from '../types';
+import { ProductionItem, Employee, VaseModel, PaymentRecord, Period, Goal, SystemLog, UserPreferences, ItemStatus } from '../types';
+import { getCanonicalVaseModelId } from '../constants';
 import { 
   encryptPayload, 
   decryptPayload, 
@@ -28,34 +29,131 @@ let lastSyncTimestamp = 0;
 let unsubscribeRealtime: Unsubscribe | null = null;
 let syncIntervalId: any = null;
 let onlineOfflineListenersInitialized = false;
+let debounceSyncTimer: any = null;
 
 // Helper to determine if a value is defined
 const isDefined = (val: any) => val !== undefined && val !== null;
 
-// Unique merge logic for ProductionItems (CRDT-style merge by ID, keeping the latest updatedAt)
+// Lifecycle pipeline priority order: items cannot regress backwards in production flow
+const STATUS_PIPELINE_ORDER: Record<string, number> = {
+  [ItemStatus.DRAFT]: 0,
+  [ItemStatus.PRODUCED]: 1,
+  [ItemStatus.AWAITING_FINISHING]: 2,
+  [ItemStatus.STOCK_NO_SHELL]: 2,
+  [ItemStatus.AWAITING_PAINTING]: 3,
+  [ItemStatus.FINISHED]: 4,
+};
+
+// Unique merge logic for ProductionItems (CRDT-style merge with strict pipeline preservation)
 function mergeProductionItems(local: ProductionItem[], remote: ProductionItem[]): ProductionItem[] {
-  const map = new Map<string, ProductionItem>();
+  const idMap = new Map<string, ProductionItem>();
   
   // Load remote items first
   remote.forEach(item => {
-    map.set(item.id, item);
+    idMap.set(item.id, item);
   });
 
-  // Merge local items, keeping the one with higher updatedAt
+  // Merge local items with pipeline-aware ordering
   local.forEach(item => {
-    const existing = map.get(item.id);
+    const existing = idMap.get(item.id);
     if (!existing) {
-      map.set(item.id, item);
+      idMap.set(item.id, item);
     } else {
-      const existingTime = existing.updatedAt || existing.createdAt || 0;
-      const localTime = item.updatedAt || item.createdAt || 0;
-      if (localTime > existingTime) {
-        map.set(item.id, item);
+      const localRank = STATUS_PIPELINE_ORDER[item.status] ?? 0;
+      const remoteRank = STATUS_PIPELINE_ORDER[existing.status] ?? 0;
+
+      // Rule 1: A vase that advanced in the pipeline (e.g. AWAITING_PAINTING) MUST NOT regress to an earlier status (e.g. AWAITING_FINISHING)
+      if (localRank > remoteRank) {
+        idMap.set(item.id, item);
+      } else if (remoteRank > localRank) {
+        // Remote has already advanced further, keep existing remote item
+      } else {
+        // Rule 2: Equal lifecycle rank -> keep local unless remote has a strictly higher timestamp
+        const existingTime = existing.updatedAt || existing.createdAt || 0;
+        const localTime = item.updatedAt || item.createdAt || 0;
+        if (localTime >= existingTime) {
+          idMap.set(item.id, item);
+        }
       }
     }
   });
 
-  return Array.from(map.values());
+  // Secondary pass: Deduplicate by CIP if CIP is present to prevent duplicate physical vases in stock
+  const cipMap = new Map<string, ProductionItem>();
+  const nonCipItems: ProductionItem[] = [];
+
+  for (const item of idMap.values()) {
+    if (!item.cip) {
+      nonCipItems.push(item);
+      continue;
+    }
+    const existing = cipMap.get(item.cip);
+    if (!existing) {
+      cipMap.set(item.cip, item);
+    } else {
+      const existingRank = STATUS_PIPELINE_ORDER[existing.status] ?? 0;
+      const currentRank = STATUS_PIPELINE_ORDER[item.status] ?? 0;
+      if (currentRank > existingRank) {
+        cipMap.set(item.cip, item);
+      } else if (currentRank === existingRank) {
+        const existingTime = existing.updatedAt || existing.createdAt || 0;
+        const currentTime = item.updatedAt || item.createdAt || 0;
+        if (currentTime >= existingTime) {
+          cipMap.set(item.cip, item);
+        }
+      }
+    }
+  }
+
+  return [...cipMap.values(), ...nonCipItems];
+}
+
+/**
+ * Deduplica e mescla os modelos de vasos pela chave canônica natural (Nome + Tipo),
+ * gerando e preservando IDs canônicos determinísticos e gerando um mapa de remapeamento
+ * para atualizar referências em itens de produção sem perda de integridade.
+ */
+function mergeAndDeduplicateVaseModels(local: VaseModel[], remote: VaseModel[]): {
+  merged: VaseModel[];
+  idRemap: Map<string, string>;
+} {
+  const idRemap = new Map<string, string>();
+  const groupMap = new Map<string, VaseModel[]>();
+
+  const allModels = [...(remote || []), ...(local || [])];
+  for (const model of allModels) {
+    if (!model || !model.name) continue;
+    const key = `${model.name.trim().toLowerCase()}_${model.type}`;
+    if (!groupMap.has(key)) {
+      groupMap.set(key, []);
+    }
+    groupMap.get(key)!.push(model);
+  }
+
+  const merged: VaseModel[] = [];
+
+  for (const models of groupMap.values()) {
+    const sample = models[0];
+    const canonicalId = getCanonicalVaseModelId(sample.name, sample.type);
+
+    let bestModel: VaseModel = { ...sample, id: canonicalId };
+    for (const m of models) {
+      if ((m.costProduction && m.costProduction > 0) || (m.priceSale && m.priceSale > 0)) {
+        bestModel = { ...m, id: canonicalId };
+      }
+    }
+
+    for (const m of models) {
+      if (m.id) {
+        idRemap.set(m.id, canonicalId);
+      }
+    }
+
+    merged.push(bestModel);
+  }
+
+  merged.sort((a, b) => a.name.localeCompare(b.name) || a.type.localeCompare(b.type));
+  return { merged, idRemap };
 }
 
 // Merge list by ID simply (union-based, no updatedAt, but unique by ID)
@@ -71,7 +169,7 @@ function mergeListById<T extends { id: string }>(local: T[], remote: T[]): T[] {
 }
 
 export interface SyncStatus {
-  status: 'IDLE' | 'SYNCING' | 'SUCCESS' | 'ERROR' | 'OFFLINE';
+  status: 'IDLE' | 'SYNCING' | 'SUCCESS' | 'ERROR' | 'OFFLINE' | 'QUOTA_EXCEEDED';
   lastSynced: Date | null;
   errorMessage?: string;
   isEncrypted: boolean;
@@ -90,6 +188,29 @@ export function subscribeToSyncStatus(listener: (status: SyncStatus) => void) {
 
 let currentStatus: SyncStatus['status'] = 'IDLE';
 let syncErrorMessage: string | undefined = undefined;
+const QUOTA_STORAGE_KEY = 'homepots_firestore_quota_exceeded_timestamp';
+
+function checkInitialQuota(): boolean {
+  if (typeof localStorage === 'undefined') return false;
+  const saved = localStorage.getItem(QUOTA_STORAGE_KEY);
+  if (!saved) return false;
+  const savedTime = parseInt(saved, 10);
+  if (isNaN(savedTime)) return false;
+  // If stored within the last 18 hours, respect the quota limit
+  if (Date.now() - savedTime < 18 * 60 * 60 * 1000) {
+    return true;
+  }
+  localStorage.removeItem(QUOTA_STORAGE_KEY);
+  return false;
+}
+
+let isQuotaExceeded = checkInitialQuota();
+let isApplyingRemoteUpdate = false;
+let isStoreHydrating = true;
+setTimeout(() => {
+  isStoreHydrating = false;
+}, 3500);
+const dirtyPartitions = new Set<string>();
 
 function getSyncStatusState(): SyncStatus {
   return {
@@ -109,10 +230,28 @@ function updateSyncStatus(status: SyncStatus['status'], errorMsg?: string) {
 
 /**
  * Executa sincronização bidirecional completa com o Firebase Firestore nativo.
+ * Otimizado com rastreamento de partições modificadas (Delta Sync) para economizar cota.
  * Partições confidenciais (pagamentos, colaboradores, taxas) são criptografadas com AES-256-GCM.
  */
-export async function syncData(): Promise<boolean> {
+export async function syncData(forceWriteAll = false, isManual = false): Promise<boolean> {
   if (isSyncing) return false;
+
+  // Se a cota foi atingida e é uma chamada automática em segundo plano, não bombardeia o Firestore
+  if (isQuotaExceeded && !isManual) {
+    updateSyncStatus(
+      'QUOTA_EXCEEDED',
+      'Limite diário gratuito de gravações do Firestore atingido (20.000 gravações/dia). O sistema continua 100% operacional no modo local seguro.'
+    );
+    return false;
+  }
+
+  // Se o usuário clicou manualmente em sincronizar, tenta novamente limpando o estado de bloqueio
+  if (isManual) {
+    isQuotaExceeded = false;
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(QUOTA_STORAGE_KEY);
+    }
+  }
 
   // Se o dispositivo estiver estritamente sem internet
   if (typeof navigator !== 'undefined' && !navigator.onLine) {
@@ -162,13 +301,36 @@ export async function syncData(): Promise<boolean> {
     const remotePrefs = remoteData.get('userPreferences') as Record<string, UserPreferences> | undefined;
     const remoteConfigs = remoteData.get('configs') as any | undefined;
 
-    // 3. Mescla inteligente de dados (CRDT)
+    // 3. Mescla inteligente de dados (CRDT) com deduplicação canônica
     const mergedPeriods = isDefined(remotePeriods) ? mergeListById(latestStore.periods, remotePeriods) : latestStore.periods;
     const mergedEmployees = isDefined(remoteEmployees) ? mergeListById(latestStore.employees, remoteEmployees) : latestStore.employees;
-    const mergedVaseModels = isDefined(remoteVases) ? mergeListById(latestStore.vaseModels, remoteVases) : latestStore.vaseModels;
-    const mergedProductionItems = isDefined(remoteItems) ? mergeProductionItems(latestStore.productionItems, remoteItems) : latestStore.productionItems;
+    
+    const { merged: mergedVaseModels, idRemap } = mergeAndDeduplicateVaseModels(
+      latestStore.vaseModels || [],
+      isDefined(remoteVases) ? remoteVases : []
+    );
+
+    let mergedProductionItems = isDefined(remoteItems) 
+      ? mergeProductionItems(latestStore.productionItems, remoteItems) 
+      : latestStore.productionItems;
+
+    // Se identificadores antigos foram consolidados para o canônico, remapeia nos itens de produção
+    if (idRemap.size > 0) {
+      mergedProductionItems = mergedProductionItems.map(item => {
+        const canonicalId = idRemap.get(item.modelId);
+        if (canonicalId && canonicalId !== item.modelId) {
+          return { ...item, modelId: canonicalId };
+        }
+        return item;
+      });
+    }
+
     const mergedPayments = isDefined(remotePayments) ? mergeListById(latestStore.payments, remotePayments) : latestStore.payments;
-    const mergedDrafts = isDefined(remoteDrafts) ? mergeListById(latestStore.drafts, remoteDrafts) : latestStore.drafts;
+    
+    // RASCUNHOS: Mantidos 100% locais ao aparelho do colaborador.
+    const confirmedSet = new Set(latestStore.confirmedDraftIds || []);
+    const mergedDrafts = (latestStore.drafts || []).filter(d => !confirmedSet.has(d.id));
+
     const mergedGoals = isDefined(remoteGoals) ? mergeListById(latestStore.goals, remoteGoals) : latestStore.goals;
 
     const mergedLogs = isDefined(remoteLogs) 
@@ -189,68 +351,134 @@ export async function syncData(): Promise<boolean> {
 
     const mergedConfigs = remoteConfigs ? { ...localConfigs, ...remoteConfigs } : localConfigs;
 
-    // 4. Atualiza a store local Zustand
-    useStore.setState({
-      periods: mergedPeriods,
-      employees: mergedEmployees,
-      vaseModels: mergedVaseModels,
-      productionItems: mergedProductionItems,
-      payments: mergedPayments,
-      drafts: mergedDrafts,
-      systemLogs: mergedLogs,
-      goals: mergedGoals,
-      userPreferences: mergedUserPreferences,
-      rawMaterialCostPerKg: mergedConfigs.rawMaterialCostPerKg ?? latestStore.rawMaterialCostPerKg,
-      paintingCommissionPercentage: mergedConfigs.paintingCommissionPercentage ?? latestStore.paintingCommissionPercentage,
-      supervisorPassword: mergedConfigs.supervisorPassword ?? latestStore.supervisorPassword
-    });
+    const currentActivePeriod = mergedPeriods.find(p => p.status === 'ACTIVE') || mergedPeriods[0];
+    const resolvedActivePeriodId = latestStore.activePeriodId || currentActivePeriod?.id || null;
 
-    // 5. Prepara envio protegido para o Firestore
+    // 4. Atualiza a store local Zustand sem disparar o ouvinte de envio para nuvem
+    isApplyingRemoteUpdate = true;
+    try {
+      useStore.setState({
+        periods: mergedPeriods,
+        activePeriodId: resolvedActivePeriodId,
+        employees: mergedEmployees,
+        vaseModels: mergedVaseModels,
+        productionItems: mergedProductionItems,
+        payments: mergedPayments,
+        drafts: mergedDrafts,
+        systemLogs: mergedLogs,
+        goals: mergedGoals,
+        userPreferences: mergedUserPreferences,
+        rawMaterialCostPerKg: mergedConfigs.rawMaterialCostPerKg ?? latestStore.rawMaterialCostPerKg,
+        paintingCommissionPercentage: mergedConfigs.paintingCommissionPercentage ?? latestStore.paintingCommissionPercentage,
+        supervisorPassword: mergedConfigs.supervisorPassword ?? latestStore.supervisorPassword
+      });
+    } finally {
+      isApplyingRemoteUpdate = false;
+    }
+
+    // 5. Envio delta protegido para o Firestore: grava SOMENTE partições modificadas para preservar a cota diária
     const partitions: { key: string; value: any }[] = [
       { key: 'periods', value: mergedPeriods },
       { key: 'employees', value: mergedEmployees },
       { key: 'vaseModels', value: mergedVaseModels },
       { key: 'productionItems', value: mergedProductionItems },
       { key: 'payments', value: mergedPayments },
-      { key: 'drafts', value: mergedDrafts },
+      { key: 'drafts', value: [] },
       { key: 'systemLogs', value: mergedLogs },
       { key: 'goals', value: mergedGoals },
       { key: 'userPreferences', value: mergedUserPreferences },
       { key: 'configs', value: mergedConfigs }
     ];
 
-    const batch = writeBatch(db);
-    const now = Date.now();
+    const partitionsToWrite = forceWriteAll 
+      ? partitions 
+      : partitions.filter(p => dirtyPartitions.has(p.key));
 
-    for (const partition of partitions) {
-      const isSensitive = SENSITIVE_PARTITION_KEYS.includes(partition.key);
-      let payloadValue = partition.value;
-      let isEncrypted = false;
+    if (partitionsToWrite.length > 0 && !isQuotaExceeded) {
+      try {
+        const batch = writeBatch(db);
+        const now = Date.now();
 
-      // Criptografia AES-256-GCM para dados sensíveis
-      if (isSensitive) {
-        payloadValue = await encryptPayload(partition.value);
-        isEncrypted = true;
+        for (const partition of partitionsToWrite) {
+          const isSensitive = SENSITIVE_PARTITION_KEYS.includes(partition.key);
+          let payloadValue = partition.value;
+          let isEncrypted = false;
+
+          // Criptografia AES-256-GCM para dados sensíveis
+          if (isSensitive) {
+            payloadValue = await encryptPayload(partition.value);
+            isEncrypted = true;
+          }
+
+          const docRef = doc(db, 'homepots_sync', partition.key);
+          batch.set(docRef, {
+            key: partition.key,
+            value: payloadValue,
+            updatedAt: now,
+            encrypted: isEncrypted
+          }, { merge: true });
+        }
+
+        await batch.commit();
+        dirtyPartitions.clear();
+        isQuotaExceeded = false;
+        if (typeof localStorage !== 'undefined') {
+          localStorage.removeItem(QUOTA_STORAGE_KEY);
+        }
+      } catch (writeErr: any) {
+        const errMsg = writeErr?.message || String(writeErr);
+        const isQuota = 
+          writeErr?.code === 'resource-exhausted' || 
+          errMsg.includes('resource-exhausted') || 
+          errMsg.includes('Quota limit exceeded') ||
+          errMsg.includes('Quota exceeded');
+
+        if (isQuota) {
+          isQuotaExceeded = true;
+          if (typeof localStorage !== 'undefined') {
+            localStorage.setItem(QUOTA_STORAGE_KEY, Date.now().toString());
+          }
+          console.warn('[HomePots Firebase] Cota diária gratuita atingida. Modo local seguro ativo.');
+          updateSyncStatus(
+            'QUOTA_EXCEEDED', 
+            'Limite diário gratuito do Firestore atingido (20.000 gravações/dia). O sistema continua 100% funcional no modo local seguro. Dados salvos com integridade.'
+          );
+        } else {
+          console.warn('[HomePots Firebase] Erro ao gravar lote no Firestore:', errMsg);
+          updateSyncStatus('ERROR', errMsg);
+        }
       }
-
-      const docRef = doc(db, 'homepots_sync', partition.key);
-      batch.set(docRef, {
-        key: partition.key,
-        value: payloadValue,
-        updatedAt: now,
-        encrypted: isEncrypted
-      }, { merge: true });
     }
 
-    await batch.commit();
-
     lastSyncTimestamp = Date.now();
-    updateSyncStatus('SUCCESS');
+    if (!isQuotaExceeded) {
+      updateSyncStatus('SUCCESS');
+    }
     isSyncing = false;
     return true;
 
   } catch (error: any) {
     const errorMsg = error?.message || String(error);
+    const isQuotaError = 
+      error?.code === 'resource-exhausted' || 
+      errorMsg.includes('resource-exhausted') || 
+      errorMsg.includes('Quota limit exceeded') ||
+      errorMsg.includes('Quota exceeded');
+
+    if (isQuotaError) {
+      isQuotaExceeded = true;
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem(QUOTA_STORAGE_KEY, Date.now().toString());
+      }
+      console.warn('[HomePots Firebase] Cota diária gratuita atingida. Modo local seguro ativo.');
+      updateSyncStatus(
+        'QUOTA_EXCEEDED', 
+        'Limite diário gratuito do Firestore atingido (20.000 gravações/dia). O sistema continua 100% funcional no modo local seguro. Dados salvos com integridade.'
+      );
+      isSyncing = false;
+      return false;
+    }
+
     const isNetworkError = 
       error?.name === 'TypeError' || 
       errorMsg.includes('Failed to fetch') || 
@@ -275,7 +503,7 @@ export async function syncData(): Promise<boolean> {
 /**
  * Inicia o ouvinte em tempo real e o ciclo de sincronização automática do Firestore
  */
-export function startAutoSync(intervalMs = 20000) {
+export function startAutoSync(intervalMs = 120000) {
   if (syncIntervalId) {
     clearInterval(syncIntervalId);
   }
@@ -290,14 +518,16 @@ export function startAutoSync(intervalMs = 20000) {
     onlineOfflineListenersInitialized = true;
     window.addEventListener('online', () => {
       console.log('[HomePots Firebase] Conexão restabelecida. Sincronizando com Firestore...');
-      syncData();
+      if (!isQuotaExceeded) {
+        syncData();
+      }
     });
     window.addEventListener('offline', () => {
       updateSyncStatus('OFFLINE', 'Dispositivo offline. Todos os dados continuam salvos localmente.');
     });
   }
 
-  // Sincronização inicial
+  // Sincronização inicial inteligente
   syncData();
 
   // Ouvinte nativo em tempo real do Firestore (onSnapshot)
@@ -307,31 +537,44 @@ export function startAutoSync(intervalMs = 20000) {
       syncCol,
       { includeMetadataChanges: false },
       async (snapshot) => {
-        // Ignora se estivermos no meio de um sync local para evitar loops
-        if (isSyncing || snapshot.empty) return;
+        // Se a cota estiver excedida ou sincronizando localmente, ignora
+        if (isQuotaExceeded || isSyncing || snapshot.empty) return;
         
         // Verifica se a mudança veio de outro aparelho (não local)
         const hasPendingWrites = snapshot.docs.some(docSnap => docSnap.metadata.hasPendingWrites);
         if (hasPendingWrites) return;
 
         console.log('[HomePots Firebase] Atualização remota detectada em tempo real.');
-        // Executa sync suave para mesclar os dados atualizados
-        syncData();
+        // Executa sync somente para ler/mesclar dados remotos sem regravar desnecessariamente
+        syncData(false);
       },
-      (error) => {
-        console.warn('[HomePots Firebase] Aviso do ouvinte em tempo real:', error.message);
+      (error: any) => {
+        const msg = error?.message || '';
+        const isQuota = error?.code === 'resource-exhausted' || msg.includes('Quota limit exceeded') || msg.includes('resource-exhausted');
+        if (isQuota) {
+          isQuotaExceeded = true;
+          updateSyncStatus(
+            'QUOTA_EXCEEDED', 
+            'Limite diário gratuito de gravações do Firestore atingido (20.000 gravações/dia). O sistema continua 100% operacional no modo local seguro.'
+          );
+        } else {
+          console.warn('[HomePots Firebase] Aviso do ouvinte em tempo real:', error.message);
+        }
       }
     );
   } catch (err: any) {
     console.warn('[HomePots Firebase] Não foi possível iniciar ouvinte em tempo real:', err.message);
   }
 
-  // Intervalo de segurança periódico
+  // Intervalo de verificação de integridade periódico (executa apenas se não estiver bloqueado por cota)
   syncIntervalId = setInterval(() => {
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
       return;
     }
-    syncData();
+    if (isQuotaExceeded) {
+      return;
+    }
+    syncData(false);
   }, intervalMs);
 }
 
@@ -348,10 +591,11 @@ export function stopAutoSync() {
 
 /**
  * Escuta alterações no Zustand local para disparar persistência em lote para o Firestore
+ * Rastreia exatamente quais partições foram modificadas para evitar gravações desnecessárias.
  */
 export function setupStoreListener() {
   useStore.subscribe((state, prevState) => {
-    if (isSyncing) return;
+    if (isStoreHydrating || isSyncing || isApplyingRemoteUpdate) return;
     if (currentStatus === 'OFFLINE' && typeof navigator !== 'undefined' && !navigator.onLine) return;
 
     const periodsChanged = state.periods !== prevState.periods;
@@ -359,7 +603,6 @@ export function setupStoreListener() {
     const vaseModelsChanged = state.vaseModels !== prevState.vaseModels;
     const itemsChanged = state.productionItems !== prevState.productionItems;
     const paymentsChanged = state.payments !== prevState.payments;
-    const draftsChanged = state.drafts !== prevState.drafts;
     const goalsChanged = state.goals !== prevState.goals;
     const logsChanged = state.systemLogs !== prevState.systemLogs;
     const prefsChanged = state.userPreferences !== prevState.userPreferences;
@@ -368,22 +611,25 @@ export function setupStoreListener() {
       state.paintingCommissionPercentage !== prevState.paintingCommissionPercentage ||
       state.supervisorPassword !== prevState.supervisorPassword;
 
-    if (
-      periodsChanged || 
-      employeesChanged || 
-      vaseModelsChanged || 
-      itemsChanged || 
-      paymentsChanged || 
-      draftsChanged || 
-      goalsChanged || 
-      logsChanged ||
-      prefsChanged || 
-      ratesChanged
-    ) {
-      // Dispara sincronização em lote com debouncing de 800ms
-      setTimeout(() => {
-        syncData();
-      }, 800);
+    if (periodsChanged) dirtyPartitions.add('periods');
+    if (employeesChanged) dirtyPartitions.add('employees');
+    if (vaseModelsChanged) dirtyPartitions.add('vaseModels');
+    if (itemsChanged) dirtyPartitions.add('productionItems');
+    if (paymentsChanged) dirtyPartitions.add('payments');
+    if (goalsChanged) dirtyPartitions.add('goals');
+    if (logsChanged) dirtyPartitions.add('systemLogs');
+    if (prefsChanged) dirtyPartitions.add('userPreferences');
+    if (ratesChanged) dirtyPartitions.add('configs');
+
+    if (dirtyPartitions.size > 0 && !isQuotaExceeded) {
+      // Dispara sincronização em lote com debouncing de 2.5s para agrupar edições e economizar cota
+      if (debounceSyncTimer) {
+        clearTimeout(debounceSyncTimer);
+      }
+      debounceSyncTimer = setTimeout(() => {
+        debounceSyncTimer = null;
+        syncData(false);
+      }, 2500);
     }
   });
 }

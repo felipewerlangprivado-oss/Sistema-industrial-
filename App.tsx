@@ -13,10 +13,10 @@ const App: React.FC = () => {
   const { isDarkMode, currentUser, currentSector, registerSystemUpdate, systemVersion } = useStore();
   const initRef = useRef(false);
 
-  // Initialize Supabase Sync on App Load
+  // Initialize Native Firebase Firestore Sync on App Load
   useEffect(() => {
     setupStoreListener();
-    startAutoSync(15000); // 15 seconds loop
+    startAutoSync(120000); // 2 minutes background health-check loop, writes are event-driven
     return () => {
       stopAutoSync();
     };
@@ -110,6 +110,10 @@ const App: React.FC = () => {
 
     if (systemVersion === '1.23.0') {
       registerSystemUpdate('FEATURE', 'Migração completa para o banco de dados nativo do Google (Firebase Firestore) com sincronização em tempo real, suporte a cache offline industrial e camada de criptografia AES-256-GCM para dados sensíveis e financeiros.');
+    }
+
+    if (systemVersion === '1.24.0') {
+      registerSystemUpdate('FIX', 'Correção no ciclo de confirmação de rascunhos: isolamento estrito como estado local do dispositivo, limpeza da partição remota na nuvem e confirmação atômica com bloqueio de duplicidade de CIPs.');
     }
   }, [systemVersion, registerSystemUpdate]);
 

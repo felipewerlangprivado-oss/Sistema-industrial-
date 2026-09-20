@@ -5,6 +5,7 @@ import { ItemStatus, Draft, Sector } from '../types';
 import { Button } from '../components/UI';
 import { Check, ArrowLeft, PaintBucket, Brush, TrendingUp, Wallet, Hammer, FileText, Trash2, Edit, Send, Calendar, Save, X, Settings, Clock, AlertTriangle } from 'lucide-react';
 import HistoryModal from '../components/HistoryModal';
+import { ProductionCalendarModal } from '../components/ProductionCalendarModal';
 import { v4 as uuidv4 } from 'uuid';
 import { GoalProgressBar, GoalsDetailView } from '../components/GoalComponents';
 import EmployeeSettingsScreen from '../components/EmployeeSettingsScreen';
@@ -17,7 +18,7 @@ interface Props {
 type ViewMode = 'DASHBOARD' | 'REVIEW' | 'GOALS' | 'SETTINGS';
 
 const ProcessingScreen: React.FC<Props> = ({ stage }) => {
-  const { productionItems, addDraft, removeDraft, confirmDraft, drafts, currentUser, logout, vaseModels, payments, goals, userPreferences, paintingCommissionPercentage, activePeriodId } = useStore();
+  const { productionItems, addDraft, removeDraft, confirmDraft, drafts, currentUser, logout, vaseModels, payments, goals, userPreferences, paintingCommissionPercentage, activePeriodId, periods } = useStore();
   
   // View State
   const [viewMode, setViewMode] = useState<ViewMode>('DASHBOARD');
@@ -27,10 +28,25 @@ const ProcessingScreen: React.FC<Props> = ({ stage }) => {
   const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split('T')[0]);
 
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [confirmingDraftId, setConfirmingDraftId] = useState<string | null>(null);
   const [historyMode, setHistoryMode] = useState<'none' | 'items' | 'financial' | 'payments'>('none');
+  const [isCalendarOpen, setIsCalendarOpen] = useState(false);
+  const [calendarInitialDate, setCalendarInitialDate] = useState<string | undefined>(undefined);
 
   // --- Calculations ---
   const today = new Date().toDateString();
+
+  // Todos os itens já processados pelo operador no setor (para o calendário de histórico completo)
+  const myAllProcessedItems = useMemo(() => {
+    if (!currentUser) return [];
+    if (stage === 'finishing') {
+      return productionItems.filter(p => p.finishedBy === currentUser.id);
+    }
+    if (stage === 'painting') {
+      return productionItems.filter(p => p.paintedBy === currentUser.id);
+    }
+    return [];
+  }, [productionItems, currentUser, stage]);
 
   const myDrafts = useMemo(() => {
     const draftType = stage === 'finishing' ? 'FINISHING' : 'PAINTING';
@@ -44,20 +60,38 @@ const ProcessingScreen: React.FC<Props> = ({ stage }) => {
      return ids;
   }, [myDrafts]);
 
+  const currentActivePeriod = useMemo(() => {
+    return periods.find(p => p.id === activePeriodId) || periods.find(p => p.status === 'ACTIVE') || periods[0];
+  }, [periods, activePeriodId]);
+  const activePeriod = currentActivePeriod;
+  const effectiveActivePeriodId = currentActivePeriod?.id;
+
   // Filter Completed Items by Active Period to reset counters
   const myPeriodItems = useMemo(() => productionItems.filter(p => {
-    if (stage === 'finishing') return p.finishedBy === currentUser?.id && p.finishedInPeriodId === activePeriodId;
-    if (stage === 'painting') return p.paintedBy === currentUser?.id && p.paintedInPeriodId === activePeriodId;
+    if (stage === 'finishing') {
+      return p.finishedBy === currentUser?.id && 
+        (!effectiveActivePeriodId || !p.finishedInPeriodId || p.finishedInPeriodId === effectiveActivePeriodId);
+    }
+    if (stage === 'painting') {
+      return p.paintedBy === currentUser?.id && 
+        (!effectiveActivePeriodId || !p.paintedInPeriodId || p.paintedInPeriodId === effectiveActivePeriodId);
+    }
     return false;
-  }), [productionItems, currentUser, stage, activePeriodId]);
+  }), [productionItems, currentUser, stage, effectiveActivePeriodId]);
 
   const myPeriodPayments = useMemo(() => 
-    payments.filter(p => p.employeeId === currentUser?.id && p.periodId === activePeriodId),
-  [payments, currentUser, activePeriodId]);
+    payments.filter(p => 
+      p.employeeId === currentUser?.id && 
+      (!effectiveActivePeriodId || !p.periodId || p.periodId === effectiveActivePeriodId)
+    ),
+  [payments, currentUser, effectiveActivePeriodId]);
 
-  const myTodaysItems = myPeriodItems.filter(p => 
-     new Date(p.updatedAt).toDateString() === today
-  );
+  const myTodaysItems = useMemo(() => 
+    myPeriodItems.filter(p => {
+      const ts = p.updatedAt || p.createdAt;
+      return ts ? new Date(ts).toDateString() === today : false;
+    }),
+  [myPeriodItems, today]);
   
   const dailyTotalQty = myTodaysItems.length;
   const dailyEarnings = myTodaysItems.reduce<number>((acc, item) => {
@@ -195,10 +229,18 @@ const ProcessingScreen: React.FC<Props> = ({ stage }) => {
   };
 
   const handleConfirmDraft = (draftId: string) => {
-      confirmDraft(draftId);
-      setFeedback('Processamento confirmado!');
-      setSelectedIds(new Set()); // Ensure selection is cleared if we were viewing it
-      setTimeout(() => setFeedback(null), 2000);
+      if (confirmingDraftId) return;
+      setConfirmingDraftId(draftId);
+      try {
+          confirmDraft(draftId);
+          setFeedback('Processamento confirmado com sucesso!');
+          setSelectedIds(new Set()); // Ensure selection is cleared if we were viewing it
+          setTimeout(() => setFeedback(null), 2500);
+      } catch (e: any) {
+          console.error(e);
+      } finally {
+          setTimeout(() => setConfirmingDraftId(null), 800);
+      }
   };
 
   const getUnitValueDisplay = (modelId: string) => {
@@ -292,6 +334,7 @@ const ProcessingScreen: React.FC<Props> = ({ stage }) => {
            sector={stage === 'finishing' ? Sector.FINISHING : Sector.PAINTING}
            userId={currentUser.id}
            vaseModels={vaseModels}
+           activePeriodId={activePeriod?.id}
         />
      );
   }
@@ -324,6 +367,7 @@ const ProcessingScreen: React.FC<Props> = ({ stage }) => {
               productionItems={productionItems} 
               sector={stage === 'finishing' ? Sector.FINISHING : Sector.PAINTING} 
               userId={currentUser.id} 
+              activePeriodId={activePeriod?.id}
               onClick={() => setViewMode('GOALS')}
            />
         )}
@@ -331,19 +375,32 @@ const ProcessingScreen: React.FC<Props> = ({ stage }) => {
         {/* Financial Dashboard (Conditional) */}
         {(prefs?.showFinancials || prefs?.showProductionQty) && (
             <div className={`${themeClasses.bg} rounded-3xl p-6 ${themeClasses.onBg} shadow-lg relative overflow-hidden`}>
-            <div className="flex justify-between items-start mb-6 relative z-10">
+            <div className="flex justify-between items-start mb-6 relative z-10 gap-3">
                 <div>
                 <p className="opacity-90 font-medium">Olá, {currentUser?.name}</p>
                 <h2 className="text-2xl font-bold">Produção do Dia</h2>
                 </div>
-                <div className={`${themeClasses.container} p-2 rounded-xl`}>
-                <TrendingUp className={themeClasses.text} />
-                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCalendarInitialDate(undefined);
+                    setIsCalendarOpen(true);
+                  }}
+                  className={`flex items-center gap-2 ${themeClasses.container} ${themeClasses.onContainer} hover:bg-white hover:text-primary active:scale-95 transition-all px-3.5 py-2 rounded-2xl shadow-sm border border-white/20 font-semibold text-xs sm:text-sm cursor-pointer shrink-0`}
+                  title="Abrir Histórico por Calendário"
+                >
+                  <TrendingUp className="w-4 h-4 text-current" />
+                  <span>Histórico</span>
+                </button>
             </div>
             <div className="grid grid-cols-2 gap-4 relative z-10">
                 {prefs?.showProductionQty && (
                     <button 
-                        onClick={() => setHistoryMode('items')}
+                        onClick={() => {
+                          const todayStr = new Date().toISOString().split('T')[0];
+                          setCalendarInitialDate(todayStr);
+                          setIsCalendarOpen(true);
+                        }}
                         className={`${themeClasses.container} ${themeClasses.onContainer} rounded-2xl p-4 active:scale-95 transition-all text-left group cursor-pointer ring-offset-2 focus:ring-2 ring-current outline-none shadow-sm h-full flex flex-col justify-between`}
                     >
                         <div className="flex items-center gap-2 mb-1 opacity-80">
@@ -415,8 +472,12 @@ const ProcessingScreen: React.FC<Props> = ({ stage }) => {
                          </div>
                       </div>
 
-                      <Button onClick={() => handleConfirmDraft(draft.id)} className={`w-full gap-2 h-12 text-base font-bold ${themeClasses.bg} ${themeClasses.onBg}`}>
-                         <Send className="w-5 h-5" /> Confirmar {stage === 'finishing' ? 'Acabamento' : 'Pintura'}
+                      <Button 
+                        onClick={() => handleConfirmDraft(draft.id)} 
+                        className={`w-full gap-2 h-12 text-base font-bold ${themeClasses.bg} ${themeClasses.onBg} disabled:opacity-50 disabled:cursor-not-allowed`}
+                        disabled={confirmingDraftId === draft.id}
+                      >
+                         <Send className="w-5 h-5" /> {confirmingDraftId === draft.id ? 'Confirmando...' : `Confirmar ${stage === 'finishing' ? 'Acabamento' : 'Pintura'}`}
                       </Button>
                    </div>
                  );
@@ -549,6 +610,18 @@ const ProcessingScreen: React.FC<Props> = ({ stage }) => {
            : historyMode === 'payments' 
               ? 'Pagamentos Recebidos' 
               : 'Extrato'}
+      />
+
+      {/* Production Calendar Modal (Histórico por Calendário) */}
+      <ProductionCalendarModal 
+        isOpen={isCalendarOpen}
+        onClose={() => setIsCalendarOpen(false)}
+        items={myAllProcessedItems}
+        vaseModels={vaseModels}
+        userName={currentUser?.name}
+        showFinancials={prefs?.showFinancials}
+        initialDate={calendarInitialDate}
+        stage={stage}
       />
     </div>
   );

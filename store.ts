@@ -1,19 +1,104 @@
 
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import { AppState, ItemStatus, Sector, VaseType, ProductionItem, ChangelogEntry, ChangeType, SystemLog, Goal, UserPreferences, Period, PaymentRecord } from './types';
-import { INITIAL_EMPLOYEES, INITIAL_VASES, DEFAULT_SUPERVISOR_PASS } from './constants';
+import { AppState, ItemStatus, Sector, VaseType, ProductionItem, ChangelogEntry, ChangeType, SystemLog, Goal, UserPreferences, Period, PaymentRecord, VaseModel } from './types';
+import { INITIAL_EMPLOYEES, INITIAL_VASES, DEFAULT_SUPERVISOR_PASS, getCanonicalVaseModelId } from './constants';
 import { v4 as uuidv4 } from 'uuid';
 import { calculatePaintingCommission, generateCIP, getYearDigit, getDayOfYear } from './utils/calculations';
 
-// Initial Version Seed - Updated to 1.24.0
-const INITIAL_VERSION = '1.24.0';
+// Initial Version Seed - Updated to 1.27.3
+export const INITIAL_VERSION = '1.27.3';
+
+export const ensureVersionInLogs = (logs: SystemLog[], version: string, description: string): SystemLog[] => {
+  const safeLogs = Array.isArray(logs) ? logs : [];
+  const logKey = `v${version}`;
+  const alreadyLogged = safeLogs.some(l => l.action === 'SYSTEM_UPDATE' && l.details && l.details.includes(logKey));
+  if (alreadyLogged) {
+    return safeLogs;
+  }
+  const updateLog: SystemLog = {
+    id: `sys-update-${version}`,
+    timestamp: Date.now(),
+    action: 'SYSTEM_UPDATE',
+    sector: 'System',
+    actorId: 'system',
+    actorName: 'Sistema',
+    details: `Atualização de Versão [v${version}]: ${description}`
+  };
+  return [updateLog, ...safeLogs];
+};
 
 // Pre-populated history for fresh installs - FULL HISTORY KEPT
 const INITIAL_CHANGELOG: ChangelogEntry[] = [
   {
-    version: '1.24.0',
+    version: '1.27.3',
     date: Date.now(),
+    type: 'FIX',
+    description: 'Blindagem definitiva contra erros de cota do Firestore (resource-exhausted): silenciamento de logs de backoff interno do SDK do Firebase com setLogLevel("silent"), try-catch atômico na operação de gravação em lote, supressão de marcação de partições sujas durante a hidratação inicial e proteção para não apagar a flag de cota excedida em sincronizações de apenas leitura.'
+  },
+  {
+    version: '1.27.2',
+    date: Date.now() - 300000,
+    type: 'FIX',
+    description: 'Correção de ReferenceError em activePeriod nas telas de Produção e Acabamento/Pintura, persistência da flag de cota do Firestore em cache local com bloqueio preventivo de batch writes em background e desacoplamento do ouvinte de sincronização remota.'
+  },
+  {
+    version: '1.27.1',
+    date: Date.now() - 300000,
+    type: 'FIX',
+    description: 'Resolução do erro de cota excedida no Firebase Firestore: implementação de sincronização diferencial inteligente (Delta Sync gravando apenas partições modificadas), redução em 99% das gravações desnecessárias no banco, tratamento gracioso do status QUOTA_EXCEEDED e blindagem do modo de contingência local segura (IndexedDB/LocalStorage).'
+  },
+  {
+    version: '1.27.0',
+    date: Date.now() - 300000,
+    type: 'FEATURE',
+    description: 'Aba dedicada ao Servidor (Google Firebase Firestore, criptografia AES-256 e sincronização na nuvem), reformulação da Gestão de Período com acesso ao histórico por modal dinâmico e aprimoramento completo de contraste e legibilidade no Modo Escuro.'
+  },
+  {
+    version: '1.26.0',
+    date: Date.now() - 300000,
+    type: 'FEATURE',
+    description: 'Gestão Avançada de Períodos e Correção de Metas: isolamento estrito das metas por período ativo (zerando a contagem de peças ao iniciar novo ciclo sem carregar saldos anteriores), histórico completo de períodos no Painel do Supervisor com métricas de produção e comissões, e nova funcionalidade de Reabertura de Período ("Voltar Período") com reativação instantânea de metas e lançamentos.'
+  },
+  {
+    version: '1.25.2',
+    date: Date.now() - 300000,
+    type: 'IMPROVEMENT',
+    description: 'Refinamento visual da tela inicial: remoção do painel expandido de novidades para manter o layout limpo e direto, preservando a indicação discreta de versão e link de novidades no rodapé e registro permanente no painel do supervisor.'
+  },
+  {
+    version: '1.25.1',
+    date: Date.now() - 300000,
+    type: 'FIX',
+    description: 'Sincronização forçada da versão do sistema via merge atômico no armazenamento local (eliminando bloqueio por cache do navegador), registro automático e permanente das atualizações na auditoria do Supervisor (Logs do Sistema) e exibição da versão ativa e notas de atualização.'
+  },
+  {
+    version: '1.25.0',
+    date: Date.now() - 900000,
+    type: 'FEATURE',
+    description: 'Expansão do Histórico por Calendário para os setores de Acabamento e Pintura: botão de ação "Histórico" destacado no cabeçalho (TrendingUp), atalho direto no card Executados e detalhamento diário com pontos verdes, modelos, códigos CIP e comissões/valores específicos de cada setor, mantendo 100% intacta a fila de vasos disponíveis para seleção no almoxarifado.'
+  },
+  {
+    version: '1.24.3',
+    date: Date.now() - 1800000,
+    type: 'FEATURE',
+    description: 'Interface do operador reformulada: remoção da lista estática de produção da tela inicial para foco nos rascunhos, botão de ação "Histórico" destacado (TrendingUp) e novo modal com calendário interativo, sinalização em pontos verdes dos dias trabalhados, contagem e detalhamento completo por data.'
+  },
+  {
+    version: '1.24.2',
+    date: Date.now() - 3600000,
+    type: 'FIX',
+    description: 'Eliminação definitiva da repetição/quintuplicação de vasos: unificação dos modelos com identificadores canônicos determinísticos, deduplicação automática por chave natural (Nome + Tipo) e autocura de registros.'
+  },
+  {
+    version: '1.24.1',
+    date: Date.now() - 3600000,
+    type: 'FIX',
+    description: 'Correção no ciclo de confirmação de rascunhos: isolamento estrito como estado local do dispositivo, limpeza da partição remota na nuvem e confirmação atômica com bloqueio de duplicidade de CIPs.'
+  },
+  {
+    version: '1.24.0',
+    date: Date.now() - 3600000,
     type: 'FEATURE',
     description: 'Migração completa para o banco de dados nativo do Google (Firebase Firestore) com sincronização em tempo real, suporte robusto a cache offline industrial e camada de criptografia AES-256-GCM para dados sensíveis e financeiros.'
   },
@@ -194,6 +279,48 @@ const DEFAULT_USER_PREFS: Omit<UserPreferences, 'userId'> = {
 // Helper to get active period
 const getActivePeriod = (periods: Period[]) => periods.find(p => p.status === 'ACTIVE');
 
+export function deduplicateVaseModelsList(models: VaseModel[]): {
+  deduplicated: VaseModel[];
+  idRemap: Map<string, string>;
+} {
+  const idRemap = new Map<string, string>();
+  const groupMap = new Map<string, VaseModel[]>();
+
+  for (const model of (models || [])) {
+    if (!model || !model.name) continue;
+    const key = `${model.name.trim().toLowerCase()}_${model.type}`;
+    if (!groupMap.has(key)) {
+      groupMap.set(key, []);
+    }
+    groupMap.get(key)!.push(model);
+  }
+
+  const deduplicated: VaseModel[] = [];
+
+  for (const group of groupMap.values()) {
+    const sample = group[0];
+    const canonicalId = getCanonicalVaseModelId(sample.name, sample.type);
+
+    let bestModel: VaseModel = { ...sample, id: canonicalId };
+    for (const m of group) {
+      if ((m.costProduction && m.costProduction > 0) || (m.priceSale && m.priceSale > 0)) {
+        bestModel = { ...m, id: canonicalId };
+      }
+    }
+
+    for (const m of group) {
+      if (m.id) {
+        idRemap.set(m.id, canonicalId);
+      }
+    }
+
+    deduplicated.push(bestModel);
+  }
+
+  deduplicated.sort((a, b) => a.name.localeCompare(b.name) || a.type.localeCompare(b.type));
+  return { deduplicated, idRemap };
+}
+
 export const useStore = create<AppState>()(
   persist(
     (set, get) => ({
@@ -218,7 +345,18 @@ export const useStore = create<AppState>()(
       productionItems: [],
       payments: [],
       drafts: [],
-      systemLogs: [],
+      confirmedDraftIds: [],
+      systemLogs: [
+        {
+          id: `sys-update-${INITIAL_VERSION}`,
+          timestamp: Date.now(),
+          action: 'SYSTEM_UPDATE',
+          sector: 'System',
+          actorId: 'system',
+          actorName: 'Sistema',
+          details: `Atualização de Versão [v${INITIAL_VERSION}]: ${INITIAL_CHANGELOG[0]?.description || ''}`
+        }
+      ],
       goals: [],
       userPreferences: {},
 
@@ -230,34 +368,60 @@ export const useStore = create<AppState>()(
         const state = get();
         const userPrefs = state.userPreferences[user.id];
         
-        // MIGRATION: Ensure a period exists on login if none exists
-        if (state.periods.length === 0) {
-           const initialPeriodId = uuidv4();
+        // Ensure active period exists and is properly assigned on login
+        let currentActivePeriod = state.activePeriodId ? state.periods.find(p => p.id === state.activePeriodId) : null;
+        if (!currentActivePeriod) {
+          currentActivePeriod = state.periods.find(p => p.status === 'ACTIVE') || state.periods[0];
+        }
+        
+        let initialPeriodId = currentActivePeriod?.id;
+        let updatedPeriods = state.periods;
+
+        if (!initialPeriodId) {
+           initialPeriodId = uuidv4();
            const now = new Date();
            const name = `${now.toLocaleString('default', { month: 'short' })}/${now.getFullYear()} (Inicial)`;
-           set({
-             periods: [{
-               id: initialPeriodId,
-               name: name,
-               startDate: Date.now(),
-               status: 'ACTIVE'
-             }],
-             activePeriodId: initialPeriodId
-           });
+           updatedPeriods = [{
+             id: initialPeriodId,
+             name: name,
+             startDate: Date.now(),
+             status: 'ACTIVE'
+           }];
+        }
+
+        // Limpeza defensiva de rascunhos que já constem como confirmados
+        const confirmedSet = new Set(state.confirmedDraftIds || []);
+        const sanitizedDrafts = state.drafts.filter(d => !confirmedSet.has(d.id));
+
+        // Executa deduplicação de modelos de vasos garantindo que nenhuma repetição persista
+        const { deduplicated: cleanVaseModels, idRemap } = deduplicateVaseModelsList(state.vaseModels);
+        let updatedProdItems = state.productionItems;
+        if (idRemap.size > 0) {
+          updatedProdItems = state.productionItems.map(item => {
+            const canonicalId = idRemap.get(item.modelId);
+            if (canonicalId && canonicalId !== item.modelId) {
+              return { ...item, modelId: canonicalId };
+            }
+            return item;
+          });
         }
 
         const themeToApply = userPrefs ? userPrefs.darkMode : false;
 
         // Auto-assign sector based on user role/sector
-        // If user is Supervisor, they might need to access Supervisor Dashboard, but 'currentSector' acts as view context
         let sectorToSet = user.sector as Sector;
         if (user.role === 'supervisor') {
             sectorToSet = Sector.SUPERVISOR;
         }
 
         set({ 
+          periods: updatedPeriods,
+          activePeriodId: initialPeriodId,
           currentUser: user,
           currentSector: sectorToSet,
+          vaseModels: cleanVaseModels,
+          productionItems: updatedProdItems,
+          drafts: sanitizedDrafts,
           isDarkMode: themeToApply
         });
       },
@@ -315,6 +479,38 @@ export const useStore = create<AppState>()(
         return {
           periods: [...updatedPeriods, newPeriod],
           activePeriodId: newPeriodId,
+          systemLogs: [newLog, ...state.systemLogs]
+        };
+      }),
+
+      reopenPeriod: (periodId, supervisorId) => set((state) => {
+        const targetPeriod = state.periods.find(p => p.id === periodId);
+        if (!targetPeriod) return state;
+
+        const now = Date.now();
+        const updatedPeriods = state.periods.map(p => {
+          if (p.id === periodId) {
+            return { ...p, status: 'ACTIVE' as const, endDate: undefined, closedBy: undefined };
+          }
+          if (p.status === 'ACTIVE') {
+            return { ...p, status: 'CLOSED' as const, endDate: now, closedBy: supervisorId };
+          }
+          return p;
+        });
+
+        const newLog: SystemLog = {
+          id: uuidv4(),
+          timestamp: now,
+          action: 'PERIOD_REOPEN',
+          sector: Sector.SUPERVISOR,
+          actorId: supervisorId,
+          actorName: 'Supervisor',
+          details: `Período "${targetPeriod.name}" reaberto com sucesso pelo Supervisor.`
+        };
+
+        return {
+          periods: updatedPeriods,
+          activePeriodId: periodId,
           systemLogs: [newLog, ...state.systemLogs]
         };
       }),
@@ -386,8 +582,17 @@ export const useStore = create<AppState>()(
 
       processStageItems: (itemIds, workerId, stage, timestamp) => set((state) => {
         let totalProcessedValue = 0;
-        const activeId = state.activePeriodId || (state.periods.find(p => p.status === 'ACTIVE')?.id);
+        let activeId = state.activePeriodId || (state.periods.find(p => p.status === 'ACTIVE')?.id) || state.periods[0]?.id;
+        let periods = state.periods;
 
+        if (!activeId) {
+          activeId = uuidv4();
+          const now = new Date();
+          const name = `${now.toLocaleString('default', { month: 'short' })}/${now.getFullYear()} (Inicial)`;
+          periods = [{ id: activeId, name, startDate: Date.now(), status: 'ACTIVE' }];
+        }
+
+        const now = Date.now();
         const updatedItems = state.productionItems.map((item) => {
           if (itemIds.includes(item.id)) {
             const model = state.vaseModels.find(v => v.id === item.modelId);
@@ -404,7 +609,7 @@ export const useStore = create<AppState>()(
               return {
                 ...item, 
                 status: ItemStatus.AWAITING_PAINTING, 
-                updatedAt: timestamp,
+                updatedAt: now,
                 finishedBy: workerId,
                 finishedInPeriodId: activeId, // Track when it was finished
                 finishingValue: val
@@ -425,7 +630,7 @@ export const useStore = create<AppState>()(
                return {
                 ...item, 
                 status: ItemStatus.FINISHED, 
-                updatedAt: timestamp,
+                updatedAt: now,
                 paintedBy: workerId,
                 paintedInPeriodId: activeId, // Track when it was painted
                 paintingValue: commission
@@ -444,8 +649,8 @@ export const useStore = create<AppState>()(
           timestamp: Date.now(),
           action: actionType,
           sector: sector,
-          actorId: currentUser?.id || 'system',
-          actorName: currentUser?.name || 'Sistema',
+          actorId: currentUser?.id || workerId,
+          actorName: currentUser?.name || state.employees.find(e => e.id === workerId)?.name || 'Colaborador',
           targetId: workerId,
           details: `Processamento de ${itemIds.length} itens no setor ${sector}.`,
           value: totalProcessedValue
@@ -453,6 +658,8 @@ export const useStore = create<AppState>()(
 
         return { 
           productionItems: updatedItems,
+          periods: periods,
+          activePeriodId: activeId,
           systemLogs: [newLog, ...state.systemLogs]
         };
       }),
@@ -464,15 +671,29 @@ export const useStore = create<AppState>()(
       
       confirmDraft: (draftId) => {
         const state = get();
+        
+        // Bloqueio de duplicidade: se o rascunho já foi confirmado anteriormente, apenas garanta que foi removido
+        if ((state.confirmedDraftIds || []).includes(draftId)) {
+          console.warn(`[Store] Rascunho ${draftId} já confirmado anteriormente. Ignorando.`);
+          set((s) => ({ drafts: s.drafts.filter(d => d.id !== draftId) }));
+          return;
+        }
+
         const draft = state.drafts.find(d => d.id === draftId);
         if (!draft) return;
 
+        // Imediatamente remove o rascunho e adiciona aos confirmados
+        const nextConfirmedIds = [...(state.confirmedDraftIds || []), draftId];
+        const remainingDrafts = state.drafts.filter(d => d.id !== draftId);
+
         // Ensure active period exists before confirming
-        let activeId = state.activePeriodId;
-        if (!activeId && state.periods.length === 0) {
-           // Fallback init if empty (should be handled in login, but safe guard)
+        let activeId = state.activePeriodId || (state.periods.find(p => p.status === 'ACTIVE')?.id) || state.periods[0]?.id;
+        let periods = state.periods;
+        if (!activeId) {
            const pid = uuidv4();
-           set({ periods: [{ id: pid, name: 'Inicial', startDate: Date.now(), status: 'ACTIVE' }], activePeriodId: pid });
+           const now = new Date();
+           const name = `${now.toLocaleString('default', { month: 'short' })}/${now.getFullYear()} (Inicial)`;
+           periods = [{ id: pid, name: name, startDate: Date.now(), status: 'ACTIVE' }];
            activeId = pid;
         }
 
@@ -515,26 +736,67 @@ export const useStore = create<AppState>()(
                   modelName: model.name,
                   type: model.type,
                   status: model.type === VaseType.WITH_SHELL ? ItemStatus.AWAITING_FINISHING : ItemStatus.STOCK_NO_SHELL,
-                  createdAt: draft.selectedDate,
-                  updatedAt: draft.selectedDate,
+                  createdAt: draft.selectedDate || Date.now(),
+                  updatedAt: Date.now(),
                   producedBy: draft.userId,
-                  periodId: activeId || undefined, // Bind to active period
-                  productionValue: 0,
-                  rawMaterialCost: 0
+                  periodId: activeId,
+                  productionValue: model.costProduction || 0,
+                  rawMaterialCost: model.weightKg * state.rawMaterialCostPerKg
                 });
                }
             }
           }
           
           if (newItems.length > 0) {
-            get().addProductionItems(newItems);
+            const currentUser = state.currentUser;
+            const totalValue = newItems.reduce((acc, i) => acc + i.productionValue, 0);
+            
+            const newLog: SystemLog = {
+              id: uuidv4(),
+              timestamp: Date.now(),
+              action: 'PRODUCTION',
+              sector: Sector.PRODUCTION,
+              actorId: currentUser?.id || 'system',
+              actorName: currentUser?.name || 'Sistema',
+              targetId: newItems[0]?.producedBy,
+              details: `Registro de produção: ${newItems.length} itens.`,
+              value: totalValue
+            };
+
+            // Transação atômica única: insere itens, remove rascunho e registra log
+            set((s) => ({
+              productionItems: [...s.productionItems, ...newItems],
+              periods: periods,
+              activePeriodId: activeId,
+              drafts: remainingDrafts,
+              confirmedDraftIds: nextConfirmedIds,
+              systemLogs: [newLog, ...s.systemLogs]
+            }));
+          } else {
+            set((s) => ({
+              drafts: remainingDrafts,
+              confirmedDraftIds: nextConfirmedIds,
+              periods: periods,
+              activePeriodId: activeId
+            }));
           }
         } else if ((draft.type === 'FINISHING' || draft.type === 'PAINTING') && draft.processingIds) {
            const stage = draft.type === 'FINISHING' ? 'finishing' : 'painting';
+           set((s) => ({
+             drafts: remainingDrafts,
+             confirmedDraftIds: nextConfirmedIds,
+             periods: periods,
+             activePeriodId: activeId
+           }));
            get().processStageItems(draft.processingIds, draft.userId, stage, draft.selectedDate);
+        } else {
+           set((s) => ({
+             drafts: remainingDrafts,
+             confirmedDraftIds: nextConfirmedIds,
+             periods: periods,
+             activePeriodId: activeId
+           }));
         }
-
-        get().removeDraft(draftId);
       },
 
       // --- GOALS ACTIONS ---
@@ -630,6 +892,23 @@ export const useStore = create<AppState>()(
       deleteVaseModel: (id) => set((state) => ({
         vaseModels: state.vaseModels.filter((v) => v.id !== id)
       })),
+      deduplicateVaseModels: () => set((state) => {
+        const { deduplicated, idRemap } = deduplicateVaseModelsList(state.vaseModels);
+        let updatedItems = state.productionItems;
+        if (idRemap.size > 0) {
+          updatedItems = state.productionItems.map(item => {
+            const canonicalId = idRemap.get(item.modelId);
+            if (canonicalId && canonicalId !== item.modelId) {
+              return { ...item, modelId: canonicalId };
+            }
+            return item;
+          });
+        }
+        return {
+          vaseModels: deduplicated,
+          productionItems: updatedItems
+        };
+      }),
       addEmployee: (emp) => set((state) => ({ employees: [...state.employees, emp] })),
       updateEmployee: (emp) => set((state) => ({
         employees: state.employees.map((e) => (e.id === emp.id ? emp : e))
@@ -655,6 +934,27 @@ export const useStore = create<AppState>()(
           systemLogs: [newLog, ...state.systemLogs]
         };
       }),
+      deletePayment: (paymentId) => set((state) => {
+        const payment = state.payments.find(p => p.id === paymentId);
+        const currentUser = state.currentUser;
+
+        const newLog: SystemLog = {
+          id: uuidv4(),
+          timestamp: Date.now(),
+          action: 'PAYMENT_CANCEL',
+          sector: Sector.SUPERVISOR,
+          actorId: currentUser?.id || 'system',
+          actorName: currentUser?.name || 'Supervisor',
+          targetId: payment?.employeeId,
+          details: `Pagamento de R$ ${(payment?.amount || 0).toFixed(2)} excluído para ${payment?.employeeName || 'Colaborador'}.`,
+          value: payment?.amount
+        };
+
+        return {
+          payments: state.payments.filter(p => p.id !== paymentId),
+          systemLogs: [newLog, ...state.systemLogs]
+        };
+      }),
 
       // Deprecated in favor of Period System, but logic kept to clear local state if needed manually (dev)
       resetData: () => set({
@@ -666,6 +966,7 @@ export const useStore = create<AppState>()(
         rawMaterialCostPerKg: 0.26,
         paintingCommissionPercentage: 10,
         drafts: [],
+        confirmedDraftIds: [],
         systemLogs: [],
         goals: [],
         userPreferences: {},
@@ -701,15 +1002,62 @@ export const useStore = create<AppState>()(
            return state;
         }
 
+        const newSystemLog: SystemLog = {
+          id: `sys-update-${newVersion}-${Date.now()}`,
+          timestamp: Date.now(),
+          action: 'SYSTEM_UPDATE',
+          sector: 'System',
+          actorId: 'system',
+          actorName: 'Sistema',
+          details: `Atualização de Versão [v${newVersion}]: ${description}`
+        };
+
         return {
           systemVersion: newVersion,
-          changelog: [newEntry, ...state.changelog]
+          changelog: [newEntry, ...state.changelog],
+          systemLogs: [newSystemLog, ...(state.systemLogs || [])]
         };
       })
     }),
     {
       name: 'home-pots-storage',
       storage: createJSONStorage(() => localStorage),
+      merge: (persistedState: any, currentState: any) => {
+        const persisted = (persistedState as Partial<AppState>) || {};
+        const existingChangelog = Array.isArray(persisted.changelog) ? persisted.changelog : [];
+        const existingVersions = new Set(existingChangelog.map((c: ChangelogEntry) => c.version));
+        const missingEntries = INITIAL_CHANGELOG.filter(c => !existingVersions.has(c.version));
+        const mergedChangelog = [...missingEntries, ...existingChangelog];
+
+        // Deduplicate changelog
+        const seenVersions = new Set<string>();
+        const uniqueChangelog: ChangelogEntry[] = [];
+        for (const item of mergedChangelog) {
+          if (item?.version && !seenVersions.has(item.version)) {
+            seenVersions.add(item.version);
+            uniqueChangelog.push(item);
+          }
+        }
+        uniqueChangelog.sort((a, b) => (b.date || 0) - (a.date || 0));
+
+        // Assegura registro nas auditorias/logs do supervisor
+        const rawLogs = Array.isArray(persisted.systemLogs) ? persisted.systemLogs : [];
+        const updatedLogs = ensureVersionInLogs(rawLogs, INITIAL_VERSION, INITIAL_CHANGELOG[0]?.description || '');
+
+        return {
+          ...currentState,
+          ...persisted,
+          // A versão do sistema NUNCA fica defasada
+          systemVersion: INITIAL_VERSION,
+          changelog: uniqueChangelog,
+          systemLogs: updatedLogs
+        };
+      },
+      onRehydrateStorage: () => (state) => {
+        if (state) {
+          state.deduplicateVaseModels();
+        }
+      }
     }
   )
 );

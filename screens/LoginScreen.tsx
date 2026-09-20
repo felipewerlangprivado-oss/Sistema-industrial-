@@ -3,7 +3,7 @@ import React, { useState, useMemo } from 'react';
 import { useStore } from '../store';
 import { Sector, Employee } from '../types';
 import { Button, Card, Modal } from '../components/UI';
-import { Factory, Brush, PaintBucket, ShieldCheck, User, ArrowLeft, KeyRound, Settings, Info, Bug, Star, Zap, Activity, Search } from 'lucide-react';
+import { Factory, Brush, PaintBucket, ShieldCheck, User, ArrowLeft, KeyRound, Settings, Info, Bug, Star, Zap, Activity, Search, Sparkles } from 'lucide-react';
 
 const LoginScreen: React.FC = () => {
   const { setSector, loginUser, employees, supervisorPassword, systemVersion, changelog } = useStore();
@@ -107,36 +107,25 @@ const LoginScreen: React.FC = () => {
           <div className="mt-8 flex justify-center">
             <button 
               onClick={() => handleSectorSelect(Sector.SUPERVISOR)}
-              className="flex items-center gap-2 text-on-surface-variant py-3 px-6 rounded-full hover:bg-surface-variant transition-colors"
+              className="flex items-center gap-2 text-on-surface-variant py-3 px-6 rounded-full hover:bg-surface-variant transition-colors cursor-pointer"
             >
               <Settings className="w-5 h-5" />
               <span className="font-medium">Acesso do Supervisor</span>
             </button>
           </div>
-
-          {/* New Info Area - Optional/Future use */}
-          <div className="mt-8 w-full animate-in fade-in slide-in-from-bottom-4 duration-700 delay-200">
-             <div className="bg-surface rounded-2xl p-5 border border-outline-variant shadow-sm flex items-start gap-4">
-                <div className="bg-surface-variant text-on-surface-variant p-2.5 rounded-xl shrink-0">
-                   <Info className="w-5 h-5" />
-                </div>
-                <div>
-                   <h3 className="text-sm font-bold text-on-surface mb-1">Informações da Fábrica</h3>
-                   <p className="text-xs text-on-surface-variant leading-relaxed">
-                      Esta área será usada para avisos, comunicados e informações importantes.
-                   </p>
-                </div>
-             </div>
-          </div>
         </div>
         
-        {/* Version Footer */}
+        {/* Version Footer Discreto */}
         <div className="absolute bottom-4 flex flex-col items-center gap-1">
-          <p className="text-xs font-medium text-on-surface-variant opacity-70">
+          <p className="text-xs font-medium text-on-surface-variant opacity-75">
             Versão {systemVersion}
           </p>
-          <button onClick={() => setShowChangelog(true)} className="text-[10px] text-primary hover:underline font-medium">
-             Ver novidades
+          <button 
+            type="button" 
+            onClick={() => setShowChangelog(true)} 
+            className="text-[11px] text-primary hover:underline font-medium cursor-pointer"
+          >
+            Ver histórico de novidades
           </button>
         </div>
 
@@ -266,11 +255,18 @@ const LoginScreen: React.FC = () => {
         )}
       </div>
 
-      {/* Version Footer */}
+      {/* Version Footer Discreto */}
       <div className="absolute bottom-4 flex flex-col items-center gap-1">
-          <p className="text-xs font-medium text-on-surface-variant opacity-70">
-            Versão {systemVersion}
-          </p>
+        <p className="text-xs font-medium text-on-surface-variant opacity-75">
+          Versão {systemVersion}
+        </p>
+        <button 
+          type="button" 
+          onClick={() => setShowChangelog(true)} 
+          className="text-[11px] text-primary hover:underline font-medium cursor-pointer"
+        >
+          Ver histórico de novidades
+        </button>
       </div>
     </div>
   );

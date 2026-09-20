@@ -6,13 +6,14 @@ import { Button, Modal } from '../components/UI';
 import { Plus, Minus, Check, ClipboardList, ArrowLeft, TrendingUp, Wallet, FileText, Trash2, Edit, Send, Calendar, Save, Settings, AlertCircle } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import HistoryModal from '../components/HistoryModal';
+import { ProductionCalendarModal } from '../components/ProductionCalendarModal';
 import { GoalProgressBar, GoalsDetailView } from '../components/GoalComponents';
 import EmployeeSettingsScreen from '../components/EmployeeSettingsScreen';
 
 type ViewMode = 'DASHBOARD' | 'REGISTER' | 'GOALS' | 'SETTINGS';
 
 const ProductionScreen: React.FC = () => {
-  const { vaseModels, addDraft, removeDraft, confirmDraft, drafts, currentUser, productionItems, payments, logout, goals, userPreferences, activePeriodId } = useStore();
+  const { vaseModels, addDraft, removeDraft, confirmDraft, drafts, currentUser, productionItems, payments, logout, goals, userPreferences, activePeriodId, periods } = useStore();
   
   // View State
   const [viewMode, setViewMode] = useState<ViewMode>('DASHBOARD');
@@ -25,30 +26,53 @@ const ProductionScreen: React.FC = () => {
   // Dashboard & Feedback State
   const [feedback, setFeedback] = useState<string | null>(null);
   const [errorFeedback, setErrorFeedback] = useState<string | null>(null);
+  const [confirmingDraftId, setConfirmingDraftId] = useState<string | null>(null);
   const [historyMode, setHistoryMode] = useState<'none' | 'items' | 'financial' | 'payments'>('none');
+  const [isCalendarOpen, setIsCalendarOpen] = useState(false);
+  const [calendarInitialDate, setCalendarInitialDate] = useState<string | undefined>(undefined);
 
   // --- Calculations ---
   const today = new Date().toDateString();
+  
+  // Todos os itens já produzidos pelo operador (para o calendário completo)
+  const myAllProduction = useMemo(() => {
+    if (!currentUser) return [];
+    return productionItems.filter(p => p.producedBy === currentUser.id);
+  }, [productionItems, currentUser]);
   
   const myDrafts = useMemo(() => 
     drafts.filter(d => d.type === 'PRODUCTION' && d.userId === currentUser?.id)
           .sort((a,b) => b.createdAt - a.createdAt),
   [drafts, currentUser]);
 
-  // Filter Items by User AND Active Period
+  const currentActivePeriod = useMemo(() => {
+    return periods.find(p => p.id === activePeriodId) || periods.find(p => p.status === 'ACTIVE') || periods[0];
+  }, [periods, activePeriodId]);
+  const activePeriod = currentActivePeriod;
+  const effectiveActivePeriodId = currentActivePeriod?.id;
+
+  // Filter Items by User AND Active Period (with fallback if periodId is unset)
   const myPeriodProduction = useMemo(() => 
-    productionItems.filter(p => p.producedBy === currentUser?.id && p.periodId === activePeriodId),
-  [productionItems, currentUser, activePeriodId]);
+    productionItems.filter(p => 
+      p.producedBy === currentUser?.id && 
+      (!effectiveActivePeriodId || !p.periodId || p.periodId === effectiveActivePeriodId)
+    ),
+  [productionItems, currentUser, effectiveActivePeriodId]);
 
   // Filter Payments by User AND Active Period
   const myPeriodPayments = useMemo(() => 
-    payments.filter(p => p.employeeId === currentUser?.id && p.periodId === activePeriodId),
-  [payments, currentUser, activePeriodId]);
+    payments.filter(p => 
+      p.employeeId === currentUser?.id && 
+      (!effectiveActivePeriodId || !p.periodId || p.periodId === effectiveActivePeriodId)
+    ),
+  [payments, currentUser, effectiveActivePeriodId]);
 
-  const myTodaysProduction = myPeriodProduction.filter(p => 
-    new Date(p.createdAt).toDateString() === today
-  );
-  
+  const myTodaysProduction = useMemo(() => 
+    myPeriodProduction.filter(p => 
+      new Date(p.createdAt).toDateString() === today
+    ),
+  [myPeriodProduction, today]);
+
   const dailyTotalQty = myTodaysProduction.length;
   const dailyEarnings = myTodaysProduction.reduce((acc, item) => acc + (item.productionValue || 0), 0);
 
@@ -148,15 +172,19 @@ const ProductionScreen: React.FC = () => {
   };
 
   const handleConfirmDraft = (draftId: string) => {
+    if (confirmingDraftId) return;
+    setConfirmingDraftId(draftId);
     try {
         confirmDraft(draftId);
-        setFeedback('Produção confirmada!');
+        setFeedback('Produção confirmada com sucesso!');
         setErrorFeedback(null);
-        setTimeout(() => setFeedback(null), 2000);
+        setTimeout(() => setFeedback(null), 2500);
     } catch (e: any) {
         console.error(e);
         setErrorFeedback(e.message || "Erro ao confirmar produção.");
         setTimeout(() => setErrorFeedback(null), 5000);
+    } finally {
+        setTimeout(() => setConfirmingDraftId(null), 800);
     }
   };
 
@@ -171,10 +199,11 @@ const ProductionScreen: React.FC = () => {
         <GoalsDetailView 
            onBack={() => setViewMode('DASHBOARD')}
            goals={goals}
-           productionItems={productionItems} // Goal view filters by period internally or uses periodId
+           productionItems={productionItems}
            sector={Sector.PRODUCTION}
            userId={currentUser.id}
            vaseModels={vaseModels}
+           activePeriodId={activePeriod?.id}
         />
      );
   }
@@ -321,6 +350,7 @@ const ProductionScreen: React.FC = () => {
               productionItems={productionItems} 
               sector={Sector.PRODUCTION} 
               userId={currentUser.id} 
+              activePeriodId={activePeriod?.id}
               onClick={() => setViewMode('GOALS')}
            />
         )}
@@ -328,21 +358,34 @@ const ProductionScreen: React.FC = () => {
         {/* Financial Dashboard - Solid Background */}
         {(prefs?.showFinancials || prefs?.showProductionQty) && (
           <div className="bg-primary rounded-3xl p-6 text-on-primary shadow-lg relative overflow-hidden">
-            <div className="flex justify-between items-start mb-6 relative z-10">
+            <div className="flex justify-between items-start mb-6 relative z-10 gap-3">
               <div>
                 <p className="text-on-primary font-medium opacity-90">Olá, {currentUser?.name}</p>
                 <h2 className="text-2xl font-bold">Seu desempenho</h2>
               </div>
-              <div className="bg-primary-container p-2 rounded-xl text-on-primary-container">
-                <TrendingUp className="w-5 h-5" />
-              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setCalendarInitialDate(undefined);
+                  setIsCalendarOpen(true);
+                }}
+                className="flex items-center gap-2 bg-primary-container text-on-primary-container hover:bg-white hover:text-primary active:scale-95 transition-all px-3.5 py-2 rounded-2xl shadow-sm border border-white/20 font-semibold text-xs sm:text-sm cursor-pointer shrink-0"
+                title="Abrir Histórico de Produção por Calendário"
+              >
+                <TrendingUp className="w-4 h-4 text-current" />
+                <span>Histórico</span>
+              </button>
             </div>
             
             <div className="grid grid-cols-2 gap-4 relative z-10">
               {/* Card 1: Daily Production (Conditional) */}
               {prefs?.showProductionQty && (
                 <button 
-                    onClick={() => setHistoryMode('items')}
+                    onClick={() => {
+                      const todayStr = new Date().toISOString().split('T')[0];
+                      setCalendarInitialDate(todayStr);
+                      setIsCalendarOpen(true);
+                    }}
                     className="bg-primary-container text-on-primary-container rounded-2xl p-4 active:scale-95 transition-all text-left group cursor-pointer ring-offset-2 focus:ring-2 ring-primary outline-none shadow-sm h-full flex flex-col justify-between"
                 >
                     <div className="flex items-center gap-2 mb-1 opacity-80">
@@ -427,8 +470,13 @@ const ProductionScreen: React.FC = () => {
                          })}
                       </div>
 
-                      <Button onClick={() => handleConfirmDraft(draft.id)} variant="primary" className="w-full gap-2 h-12 text-base font-bold">
-                         <Send className="w-5 h-5" /> Confirmar Produção
+                      <Button 
+                        onClick={() => handleConfirmDraft(draft.id)} 
+                        variant="primary" 
+                        className="w-full gap-2 h-12 text-base font-bold disabled:opacity-50 disabled:cursor-not-allowed"
+                        disabled={confirmingDraftId === draft.id}
+                      >
+                         <Send className="w-5 h-5" /> {confirmingDraftId === draft.id ? 'Confirmando...' : 'Confirmar Produção'}
                       </Button>
                    </div>
                  );
@@ -436,6 +484,9 @@ const ProductionScreen: React.FC = () => {
              </div>
           </div>
         )}
+
+        {/* Espaçamento inferior limpo */}
+        <div className="pb-32" />
       </div>
 
       {/* Floating Action Button - Opens New View */}
@@ -470,6 +521,17 @@ const ProductionScreen: React.FC = () => {
            </div>
         </div>
       )}
+
+      {/* Calendar History Modal */}
+      <ProductionCalendarModal
+        isOpen={isCalendarOpen}
+        onClose={() => setIsCalendarOpen(false)}
+        items={myAllProduction}
+        vaseModels={vaseModels}
+        userName={currentUser?.name}
+        showFinancials={prefs?.showFinancials}
+        initialDate={calendarInitialDate}
+      />
 
       {/* History Modal Logic */}
       {historyMode === 'financial' ? (

@@ -9,16 +9,18 @@ interface GoalProgressBarProps {
   productionItems: ProductionItem[];
   sector: Sector;
   userId: string;
+  activePeriodId?: string;
   onClick: () => void;
 }
 
-export const GoalProgressBar: React.FC<GoalProgressBarProps> = ({ goals, productionItems, sector, userId, onClick }) => {
+export const GoalProgressBar: React.FC<GoalProgressBarProps> = ({ goals, productionItems, sector, userId, activePeriodId, onClick }) => {
   const activeGoal = useMemo(() => {
     const now = Date.now();
-    // Prefer Weekly goals, else Monthly, else Daily
+    // Prefer Weekly goals, else Monthly, else Daily, strictly isolated to active period if specified
     const userGoals = goals.filter(g => 
       g.employeeId === userId && 
       g.sector === sector &&
+      (!activePeriodId || g.periodId === activePeriodId) &&
       g.startDate <= now && 
       g.endDate >= now
     );
@@ -26,7 +28,7 @@ export const GoalProgressBar: React.FC<GoalProgressBarProps> = ({ goals, product
     return userGoals.find(g => g.period === 'WEEKLY') || 
            userGoals.find(g => g.period === 'MONTHLY') || 
            userGoals.find(g => g.period === 'DAILY');
-  }, [goals, userId, sector]);
+  }, [goals, userId, sector, activePeriodId]);
 
   const progress = useMemo(() => {
     if (!activeGoal) return { total: 0, current: 0, percent: 0 };
@@ -35,14 +37,27 @@ export const GoalProgressBar: React.FC<GoalProgressBarProps> = ({ goals, product
        const isUser = (sector === Sector.PRODUCTION && p.producedBy === userId) ||
                       (sector === Sector.FINISHING && p.finishedBy === userId) ||
                       (sector === Sector.PAINTING && p.paintedBy === userId);
-       return isUser && p.updatedAt >= activeGoal.startDate && p.updatedAt <= activeGoal.endDate;
+       if (!isUser) return false;
+
+       // If activePeriodId is defined, strictly filter by items executed in that period
+       if (activePeriodId) {
+          if (sector === Sector.PRODUCTION) {
+             return p.periodId === activePeriodId;
+          } else if (sector === Sector.FINISHING) {
+             return p.finishedInPeriodId === activePeriodId;
+          } else if (sector === Sector.PAINTING) {
+             return p.paintedInPeriodId === activePeriodId;
+          }
+       }
+
+       return p.updatedAt >= activeGoal.startDate && p.updatedAt <= activeGoal.endDate;
     });
 
     const current = itemsInPeriod.length;
     const percent = Math.min(100, Math.round((current / activeGoal.totalQuantityTarget) * 100));
     
     return { total: activeGoal.totalQuantityTarget, current, percent };
-  }, [activeGoal, productionItems, sector, userId]);
+  }, [activeGoal, productionItems, sector, userId, activePeriodId]);
 
   if (!activeGoal) {
     return (
@@ -98,15 +113,17 @@ interface GoalsDetailViewProps {
    sector: Sector;
    userId: string;
    vaseModels: VaseModel[];
+   activePeriodId?: string;
 }
 
-export const GoalsDetailView: React.FC<GoalsDetailViewProps> = ({ onBack, goals, productionItems, sector, userId, vaseModels }) => {
+export const GoalsDetailView: React.FC<GoalsDetailViewProps> = ({ onBack, goals, productionItems, sector, userId, vaseModels, activePeriodId }) => {
    // Filter Active Goals
    const activeGoals = useMemo(() => {
       const now = Date.now();
       return goals.filter(g => 
         g.employeeId === userId && 
         g.sector === sector &&
+        (!activePeriodId || g.periodId === activePeriodId) &&
         g.startDate <= now && 
         g.endDate >= now
       ).sort((a, b) => {
@@ -114,14 +131,26 @@ export const GoalsDetailView: React.FC<GoalsDetailViewProps> = ({ onBack, goals,
          const p = { 'DAILY': 1, 'WEEKLY': 2, 'MONTHLY': 3 };
          return p[a.period] - p[b.period];
       });
-   }, [goals, userId, sector]);
+   }, [goals, userId, sector, activePeriodId]);
 
    const getProgress = (goal: Goal) => {
       const itemsInPeriod = productionItems.filter(p => {
          const isUser = (sector === Sector.PRODUCTION && p.producedBy === userId) ||
                         (sector === Sector.FINISHING && p.finishedBy === userId) ||
                         (sector === Sector.PAINTING && p.paintedBy === userId);
-         return isUser && p.updatedAt >= goal.startDate && p.updatedAt <= goal.endDate;
+         if (!isUser) return false;
+
+         if (activePeriodId) {
+            if (sector === Sector.PRODUCTION) {
+               return p.periodId === activePeriodId;
+            } else if (sector === Sector.FINISHING) {
+               return p.finishedInPeriodId === activePeriodId;
+            } else if (sector === Sector.PAINTING) {
+               return p.paintedInPeriodId === activePeriodId;
+            }
+         }
+
+         return p.updatedAt >= goal.startDate && p.updatedAt <= goal.endDate;
       });
       return itemsInPeriod;
    };

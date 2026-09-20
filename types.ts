@@ -107,7 +107,7 @@ export interface UserPreferences {
 }
 
 // --- LOGGING & AUDIT SYSTEM ---
-export type AuditAction = 'PRODUCTION' | 'FINISHING' | 'PAINTING' | 'PAYMENT' | 'ADMIN_UPDATE' | 'GOAL_UPDATE' | 'SETTINGS_UPDATE' | 'LOGOUT' | 'PERIOD_CLOSE';
+export type AuditAction = 'PRODUCTION' | 'FINISHING' | 'PAINTING' | 'PAYMENT' | 'ADMIN_UPDATE' | 'GOAL_UPDATE' | 'SETTINGS_UPDATE' | 'LOGOUT' | 'PERIOD_CLOSE' | 'PERIOD_REOPEN' | 'SYSTEM_UPDATE';
 
 export interface SystemLog {
   id: string;
@@ -202,6 +202,7 @@ export interface AppState {
   productionItems: ProductionItem[];
   payments: PaymentRecord[];
   drafts: Draft[]; 
+  confirmedDraftIds?: string[];
   systemLogs: SystemLog[];
   goals: Goal[];
   userPreferences: Record<string, UserPreferences>; // Map userId -> Prefs
@@ -218,6 +219,7 @@ export interface AppState {
   
   // Period Actions
   closePeriod: (supervisorId: string) => void;
+  reopenPeriod: (periodId: string, supervisorId: string) => void;
 
   // Draft Actions
   addDraft: (draft: Draft) => void;
@@ -238,9 +240,11 @@ export interface AppState {
   addVaseModel: (model: VaseModel) => void;
   updateVaseModel: (model: VaseModel) => void;
   deleteVaseModel: (id: string) => void;
+  deduplicateVaseModels: () => void;
   addEmployee: (emp: Employee) => void;
   updateEmployee: (emp: Employee) => void;
   addPayment: (payment: PaymentRecord) => void;
+  deletePayment: (id: string) => void;
   resetData: () => void; // Deprecated but kept for type compatibility
 
   // Version Control Actions

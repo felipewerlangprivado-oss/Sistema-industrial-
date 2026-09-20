@@ -5,8 +5,11 @@
 ī */
 
 import { initializeApp, getApps, getApp, FirebaseApp } from 'firebase/app';
-import { getFirestore, Firestore } from 'firebase/firestore';
+import { getFirestore, Firestore, setLogLevel } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
+
+// Configure Firestore SDK internal logger to silent to prevent SDK-level console error floods on quota or network backoff
+setLogLevel('silent');
 
 // Inicializa ou reutiliza a instância do Firebase
 export const firebaseApp: FirebaseApp = !getApps().length 

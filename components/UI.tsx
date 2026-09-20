@@ -62,25 +62,35 @@ interface ModalProps {
   title: string;
   children: React.ReactNode;
   footer?: React.ReactNode;
+  size?: 'sm' | 'md' | 'lg' | 'xl';
+  className?: string;
 }
 
-export const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, footer }) => {
+export const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, footer, size = 'md', className }) => {
   if (!isOpen) return null;
+
+  const sizeClasses = {
+    sm: "max-w-sm",
+    md: "max-w-sm md:max-w-md",
+    lg: "max-w-lg md:max-w-2xl",
+    xl: "max-w-xl md:max-w-4xl",
+  };
+
   return (
     // Backdrop can be transparent (standard UX), but modal content must be solid
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 animate-in fade-in duration-200">
-      <div className="bg-surface text-on-surface rounded-[28px] w-full max-w-sm md:max-w-md flex flex-col shadow-2xl animate-in zoom-in-95 duration-200 border border-outline-variant">
-        <div className="flex justify-between items-center px-6 pt-6 pb-2">
-          <h2 className="text-2xl font-normal text-on-surface">{title}</h2>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 md:p-4 bg-black/60 animate-in fade-in duration-200">
+      <div className={cn("bg-surface text-on-surface rounded-[28px] w-full flex flex-col shadow-2xl animate-in zoom-in-95 duration-200 border border-outline-variant max-h-[90vh]", sizeClasses[size], className)}>
+        <div className="flex justify-between items-center px-6 pt-6 pb-2 shrink-0">
+          <h2 className="text-xl md:text-2xl font-normal text-on-surface">{title}</h2>
           <button onClick={onClose} className="p-2 hover:bg-surface-variant rounded-full transition-colors text-on-surface-variant">
             <X className="w-6 h-6" />
           </button>
         </div>
-        <div className="px-6 py-4 overflow-y-auto max-h-[60vh] text-on-surface-variant">
+        <div className="px-6 py-4 overflow-y-auto text-on-surface-variant flex-1">
           {children}
         </div>
         {footer && (
-          <div className="px-6 pb-6 pt-2 flex justify-end gap-2">
+          <div className="px-6 pb-6 pt-2 flex justify-end gap-2 shrink-0">
             {footer}
           </div>
         )}
